@@ -124,8 +124,8 @@ function asset(string $path): string
     $path = ltrim($path, '/');
     $base = rtrim((string) config('base_path', ''), '/');
     $assetUrl = ($base === '' ? '' : $base) . '/assets/' . $path;
-    #$assetFile = dirname(__DIR__) . '/public/assets/' . $path;
-    $assetFile = dirname(__DIR__) . '/assets/' . $path;
+    $assetFile = dirname(__DIR__) . '/public/assets/' . $path;
+    #$assetFile = dirname(__DIR__) . '/assets/' . $path;
     return is_file($assetFile)
         ? $assetUrl . '?v=' . filemtime($assetFile)
         : $assetUrl;
