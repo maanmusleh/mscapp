@@ -1,0 +1,14 @@
+DirectoryIndex index.php
+Options -Indexes
+
+RewriteEngine On
+
+# Serve real files and directories directly (assets, health checks, etc.).
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Route every other request through CAT's front controller.  The target is
+# deliberately relative, so this also works when CAT is installed in a
+# subdirectory such as /cat/public.
+RewriteRule ^ index.php [L]

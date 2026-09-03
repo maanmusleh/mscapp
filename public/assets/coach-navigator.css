@@ -1,0 +1,99 @@
+.coach-rink-navigator {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+}
+
+.coach-rink-navigator form {
+    display: grid;
+    grid-template-columns: max-content max-content auto max-content;
+    align-items: end;
+    justify-content: start;
+    gap: 7px;
+}
+
+.coach-rink-navigator label {
+    display: grid;
+    min-width: 0;
+    gap: 1px;
+}
+
+.coach-rink-navigator label > span {
+    color: #a8c8ef;
+    font-size: .61rem;
+    font-weight: 850;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.coach-rink-navigator select {
+    width: auto;
+    height: 26px;
+    min-height: 26px;
+    padding: 0 32px 0 9px;
+    border: 1px solid rgba(255, 255, 255, .42);
+    border-radius: 7px;
+    color: var(--slate-800);
+    background: #fff;
+    font-size: .8rem;
+    line-height: 1.1;
+    field-sizing: content;
+}
+
+.coach-rink-go {
+    min-width: 48px;
+    height: 26px;
+    padding: 0 12px;
+    border: 1px solid rgba(255, 255, 255, .5);
+    border-radius: 7px;
+    color: var(--navy-900);
+    background: #d9ecff;
+    font-size: .76rem;
+    font-weight: 850;
+    cursor: pointer;
+}
+
+.coach-rink-go:hover,
+.coach-rink-go:focus-visible { background: #fff; }
+
+.coach-rink-go:disabled {
+    border-color: rgba(255, 255, 255, .18);
+    color: #8da3be;
+    background: rgba(255, 255, 255, .1);
+    cursor: not-allowed;
+}
+
+.coach-rink-session-summary {
+    align-self: end;
+    padding: 0 2px 3px;
+    color: #c5d8ef;
+    font-size: .7rem;
+    font-weight: 700;
+    line-height: 1.15;
+    white-space: nowrap;
+}
+
+.rink-app-page .rink-activity-grid,
+.rink-app-page .rink-activity-page {
+    transition: filter .16s ease, opacity .16s ease;
+}
+
+.rink-app-page.is-coach-context-pending .rink-activity-grid,
+.rink-app-page.is-coach-context-pending .rink-activity-page {
+    filter: blur(3px);
+    opacity: .58;
+    pointer-events: none;
+    user-select: none;
+}
+
+@media (max-width: 1250px) {
+    .coach-rink-navigator form { grid-template-columns: max-content max-content auto; }
+    .coach-rink-session-summary { display: none; }
+}
+
+@media (max-width: 520px) {
+    .coach-rink-navigator form { gap: 3px; }
+    .coach-rink-navigator select { max-width: 145px; padding-inline: 5px 22px; font-size: .68rem; }
+    .coach-rink-navigator label:first-of-type select { max-width: 105px; }
+    .coach-rink-go { min-width: 36px; padding-inline: 7px; }
+}

@@ -1,0 +1,33 @@
+:root {
+    --skate-canada-col-width: 124px;
+}
+
+/* Keep the roster actions independent of the Skate Canada number column. */
+.roster-header-actions {
+    left: var(--sticky-select-width);
+    right: auto;
+    width: calc(var(--sticky-select-width) + var(--first-name-col-width) + var(--last-name-col-width) + var(--skate-canada-col-width));
+    z-index: 2;
+}
+
+.skater-sheet thead .sticky-select {
+    z-index: 10 !important;
+}
+
+.skater-sheet thead .sticky-select,
+.skater-sheet thead .sticky-first-name,
+.skater-sheet thead .sticky-last-name,
+.skater-sheet thead .sticky-number {
+    background: var(--white) !important;
+}
+
+.skater-sheet thead .sticky-select,
+.skater-sheet thead .sticky-first-name,
+.skater-sheet thead .sticky-last-name {
+    border-right-color: transparent !important;
+}
+
+.sticky-number {
+    width: var(--skate-canada-col-width);
+    min-width: var(--skate-canada-col-width) !important;
+}

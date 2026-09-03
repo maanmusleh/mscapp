@@ -1,0 +1,27 @@
+# Defence in depth for installations where the CAT project directory is used
+# as the Apache document root.  The supported deployment still sets the
+# document root to public/ (see SETUP.md).
+Options -Indexes
+
+# Do not make installer SQL, sample imports, or project documentation readable
+# from a mistakenly exposed project root.
+<FilesMatch "\.(?:sql|csv|md|log|ini|env)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Also deny dotfiles other than this Apache configuration file.
+<FilesMatch "^\.(?!htaccess$)">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
