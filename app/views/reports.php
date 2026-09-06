@@ -45,10 +45,10 @@ $userInitials = strtoupper($userInitials !== '' ? $userInitials : mb_substr($dis
         <?php if ($canExportSkaterAchievements): ?>
             <section class="user-card report-export-card" id="export-skater-achievements" aria-labelledby="achievement-export-heading">
                 <div class="card-heading">
-                    <h2 id="achievement-export-heading">Export Skater Achievements</h2>
+                    <h2 id="achievement-export-heading">Export Skaters</h2>
                 </div>
                 <?php if ($achievementExportOptions['seasons'] === []): ?>
-                    <p class="report-export-empty">Create a season before exporting skater achievements.</p>
+                    <p class="report-export-empty">Create a season before exporting skaters.</p>
                 <?php else: ?>
                     <form class="report-export-form" method="post" action="<?= e(url('reports/skater-achievements/export')) ?>" data-achievement-export-form>
                         <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
@@ -108,6 +108,7 @@ $userInitials = strtoupper($userInitials !== '' ? $userInitials : mb_substr($dis
                                 <label><input type="checkbox" name="columns[]" value="canskate_number" checked> <span>CanSkate Number</span></label>
                                 <label><input type="checkbox" name="columns[]" value="date_of_birth" checked> <span>Date of birth</span></label>
                                 <label><input type="checkbox" name="columns[]" value="gender" checked> <span>Gender</span></label>
+                                <label><input type="checkbox" name="columns[]" value="groups" data-export-groups-column disabled> <span>Groups</span></label>
                                 <label><input type="checkbox" name="columns[]" value="guardian_info" checked> <span>Guardian info</span></label>
                                 <label><input type="checkbox" name="columns[]" value="general_notes" checked> <span>General notes</span></label>
                                 <label><input type="checkbox" name="columns[]" value="medical_notes" checked> <span>Medical/accommodation notes</span></label>
@@ -116,7 +117,7 @@ $userInitials = strtoupper($userInitials !== '' ? $userInitials : mb_substr($dis
                                 <label><input type="checkbox" name="columns[]" value="badges" checked> <span>Badges</span></label>
                             </div>
                         </fieldset>
-                        <button class="button button-primary" type="submit">Export achievements</button>
+                        <button class="button button-primary" type="submit">Export Skaters</button>
                     </form>
                 <?php endif; ?>
             </section>
@@ -135,7 +136,7 @@ $userInitials = strtoupper($userInitials !== '' ? $userInitials : mb_substr($dis
             <section class="user-card reports-placeholder" aria-labelledby="reports-access-heading">
                 <span class="eyebrow">Reporting workspace</span>
                 <h2 id="reports-access-heading">No reports available</h2>
-                <p>Achievement exports are available to Editors and Administrators.</p>
+                <p>Skater exports are available to Editors and Administrators.</p>
             </section>
         <?php endif; ?>
     </main>

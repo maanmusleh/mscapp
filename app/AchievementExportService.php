@@ -99,6 +99,9 @@ final class AchievementExportService
         );
 
         $columns = $this->selectedColumns($filters);
+        if (in_array('groups', $columns, true) && $sessionId === null) {
+            throw new InvalidArgumentException('Choose a single session to include Groups.');
+        }
         $season = $this->season($clubId, $seasonId);
         $this->validateRegistrationFilters($clubId, $seasonId, $sessionId, $groupId);
         $skaters = $this->skaters($clubId, $seasonId, $sessionId, $groupId, $age, $highestBadge);
@@ -309,14 +312,40 @@ final class AchievementExportService
             $parameters['highest_badge'] = $highestBadge;
         }
 
+        $groupSelect = 'NULL AS group_name';
+        $groupJoins = '';
+        if ($sessionId !== null) {
+            $parameters['group_column_session_id'] = $sessionId;
+            $groupSelect = 'export_group.name AS group_name';
+            $groupJoins = '
+             LEFT JOIN skater_enrollment export_enrollment
+                ON export_enrollment.skater_id = s.id
+               AND export_enrollment.program_session_id = :group_column_session_id
+               AND export_enrollment.deleted_at IS NULL
+             LEFT JOIN group_assignment export_assignment
+                ON export_assignment.id = (
+                    SELECT latest_export_assignment.id
+                    FROM group_assignment latest_export_assignment
+                    WHERE latest_export_assignment.skater_enrollment_id = export_enrollment.id
+                    ORDER BY latest_export_assignment.id DESC
+                    LIMIT 1
+                )
+             LEFT JOIN program_group export_group
+                ON export_group.id = export_assignment.program_group_id
+               AND export_group.program_session_id = export_enrollment.program_session_id
+               AND export_group.deleted_at IS NULL';
+        }
+
         $statement = $this->pdo->prepare(
             'SELECT DISTINCT
                 s.id, s.first_name, s.last_name, s.skate_canada_number,
-                s.date_of_birth, g.name AS gender_name,
+                s.date_of_birth, COALESCE(NULLIF(s.gender_text, \'\'), g.name) AS gender_name,
+                ' . $groupSelect . ',
                 s.parent_guardian_name, s.parent_guardian_email,
                 s.parent_guardian_phone, s.general_notes, s.medical_notes, s.active
              FROM skater s
              LEFT JOIN gender g ON g.id = s.gender_id
+             ' . $groupJoins . '
              WHERE s.club_id = :club_id AND s.deleted_at IS NULL
                AND EXISTS (
                     SELECT 1
@@ -427,6 +456,7 @@ final class AchievementExportService
         if ($include('canskate_number')) $headers[] = 'Skate Canada Number';
         if ($include('date_of_birth')) $headers[] = 'Date of Birth';
         if ($include('gender')) $headers[] = 'Gender';
+        if ($include('groups')) $headers[] = 'Group';
         if ($include('guardian_info')) $headers = array_merge($headers, ['Guardian Name', 'Guardian Email', 'Guardian Phone']);
         if ($include('general_notes')) $headers[] = 'General Notes';
         if ($include('medical_notes')) $headers[] = 'Medical / Accommodation Notes';
@@ -457,6 +487,7 @@ final class AchievementExportService
             if ($include('canskate_number')) $row[] = $skater['skate_canada_number'];
             if ($include('date_of_birth')) $row[] = $skater['date_of_birth'];
             if ($include('gender')) $row[] = $skater['gender_name'];
+            if ($include('groups')) $row[] = $skater['group_name'];
             if ($include('guardian_info')) $row = array_merge($row, [
                 $skater['parent_guardian_name'], $skater['parent_guardian_email'], $skater['parent_guardian_phone'],
             ]);
@@ -486,12 +517,12 @@ final class AchievementExportService
     private function selectedColumns(array $filters): array
     {
         $allowed = [
-            'name', 'canskate_number', 'date_of_birth', 'gender', 'guardian_info',
+            'name', 'canskate_number', 'date_of_birth', 'gender', 'groups', 'guardian_info',
             'general_notes', 'medical_notes', 'skills', 'ribbons', 'badges',
         ];
         $raw = $filters['columns'] ?? null;
         if ($raw === null && empty($filters['columns_selected'])) {
-            return $allowed;
+            return array_values(array_diff($allowed, ['groups']));
         }
         if (!is_array($raw)) {
             throw new InvalidArgumentException('Select at least one column to include.');

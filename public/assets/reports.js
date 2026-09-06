@@ -5,7 +5,15 @@
     const season = form.querySelector('[data-export-season]');
     const session = form.querySelector('[data-export-session]');
     const group = form.querySelector('[data-export-group]');
+    const groupsColumn = form.querySelector('[data-export-groups-column]');
     if (!season || !session || !group) return;
+
+    const updateGroupsColumn = () => {
+        if (!groupsColumn) return;
+        const enabled = session.value !== '';
+        groupsColumn.disabled = !enabled;
+        if (!enabled) groupsColumn.checked = false;
+    };
 
     const updateGroups = () => {
         const seasonId = season.value;
@@ -20,6 +28,7 @@
             if (available && option.selected) selectedGroupAvailable = true;
         });
         if (!selectedGroupAvailable) group.value = '';
+        updateGroupsColumn();
     };
 
     const updateSessions = () => {

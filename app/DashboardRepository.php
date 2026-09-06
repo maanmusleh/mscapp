@@ -289,7 +289,8 @@ final class DashboardRepository
                     report_note.updated_at AS report_card_note_updated_at,
                     s.medical_notes,
                     s.gender_id,
-                    g.name AS gender_name,
+                    s.gender_text,
+                    COALESCE(NULLIF(s.gender_text, \'\'), g.name) AS gender_name,
                     s.active
                 FROM skater s
                 LEFT JOIN gender g ON g.id = s.gender_id
@@ -728,7 +729,8 @@ final class DashboardRepository
                 s.medical_notes,
                 s.active,
                 s.gender_id,
-                g.name AS gender_name,
+                s.gender_text,
+                COALESCE(NULLIF(s.gender_text, \'\'), g.name) AS gender_name,
                 s.created_at,
                 s.updated_at
              FROM skater s

@@ -2383,19 +2383,13 @@
                     <div class="detail-grid">${contactContent}</div>
                 </section>
             `;
-        const genderField = `
-            <label>
-                <span>Gender</span>
-                <select name="gender_id">
-                    <option value="">Not specified</option>
-                    ${(data.genders || []).map((gender) => `
-                        <option value="${escapeHtml(gender.id)}" ${Number(skater.gender_id) === Number(gender.id) ? 'selected' : ''}>
-                            ${escapeHtml(gender.name)}
-                        </option>
-                    `).join('')}
-                </select>
-            </label>
-        `;
+        const genderField = inputField(
+            'gender_text',
+            'Gender',
+            skater.gender_text || skater.gender_name || '',
+            'text',
+            'maxlength="80"'
+        );
 
         const editForm = permissions.can_edit
             ? `
@@ -2568,13 +2562,7 @@
                     ${inputField('last_name', 'Last name', '', 'text', 'required maxlength="100" autocomplete="family-name"')}
                     ${inputField('skate_canada_number', 'Skate Canada no. (optional)', '', 'text', 'maxlength="10" pattern="[A-Za-z0-9]{10}" autocapitalize="characters"')}
                     ${inputField('date_of_birth', 'Date of birth', '', 'date', 'required')}
-                    <label>
-                        <span>Gender</span>
-                        <select name="gender_id">
-                            <option value="">Not specified</option>
-                            ${availableGenders.map((gender) => `<option value="${escapeHtml(gender.id)}">${escapeHtml(gender.name)}</option>`).join('')}
-                        </select>
-                    </label>
+                    ${inputField('gender_text', 'Gender', '', 'text', 'maxlength="80"')}
                     ${inputField('parent_guardian_name', 'Guardian name', '', 'text', 'maxlength="200"')}
                     ${inputField('parent_guardian_email', 'Guardian email', '', 'email', 'maxlength="254"')}
                     ${inputField('parent_guardian_phone', 'Guardian phone', '', 'tel', 'maxlength="40"')}

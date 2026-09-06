@@ -38,7 +38,11 @@ final class SkaterService
             throw new InvalidArgumentException('Date of birth must be a valid date.');
         }
         $skateCanadaNumber = $this->skateCanadaNumber($input['skate_canada_number'] ?? null);
-        $genderId = $this->genderId($input['gender_id'] ?? null);
+        $genderTextProvided = array_key_exists('gender_text', $input);
+        $genderText = $genderTextProvided ? $this->genderText($input['gender_text']) : null;
+        $genderId = $genderTextProvided
+            ? $this->importGenderId($genderText ?? '', $this->importGenderMap())
+            : $this->genderId($input['gender_id'] ?? null);
 
         $statement = $this->pdo->prepare(
             'UPDATE skater
@@ -48,6 +52,7 @@ final class SkaterService
                 last_name = :last_name,
                 date_of_birth = :date_of_birth,
                 gender_id = :gender_id,
+                gender_text = :gender_text,
                 parent_guardian_name = :parent_guardian_name,
                 parent_guardian_email = :parent_guardian_email,
                 parent_guardian_phone = :parent_guardian_phone,
@@ -67,6 +72,7 @@ final class SkaterService
                 'last_name' => $required['last_name'],
                 'date_of_birth' => $required['date_of_birth'],
                 'gender_id' => $genderId,
+                'gender_text' => $genderText,
                 'parent_guardian_name' => $this->nullable($input['parent_guardian_name'] ?? null),
                 'parent_guardian_email' => $this->nullable($input['parent_guardian_email'] ?? null),
                 'parent_guardian_phone' => $this->nullable($input['parent_guardian_phone'] ?? null),
@@ -112,14 +118,19 @@ final class SkaterService
         if (!$this->validDate($dateOfBirth)) {
             throw new InvalidArgumentException('Date of birth must be a valid date.');
         }
+        $genderTextProvided = array_key_exists('gender_text', $input);
+        $genderText = $genderTextProvided ? $this->genderText($input['gender_text']) : null;
+        $genderId = $genderTextProvided
+            ? $this->importGenderId($genderText ?? '', $this->importGenderMap())
+            : $this->genderId($input['gender_id'] ?? null);
 
         $statement = $this->pdo->prepare(
             'INSERT INTO skater (
-                club_id, gender_id, skate_canada_number, first_name, last_name, date_of_birth,
+                club_id, gender_id, gender_text, skate_canada_number, first_name, last_name, date_of_birth,
                 parent_guardian_name, parent_guardian_email, parent_guardian_phone, general_notes, medical_notes,
                 active, created_by_user_id, updated_by_user_id
              ) VALUES (
-                :club_id, :gender_id, :skate_canada_number, :first_name, :last_name, :date_of_birth,
+                :club_id, :gender_id, :gender_text, :skate_canada_number, :first_name, :last_name, :date_of_birth,
                 :parent_guardian_name, :parent_guardian_email, :parent_guardian_phone, :general_notes, :medical_notes,
                 1, :created_by_user_id, :updated_by_user_id
              )'
@@ -129,7 +140,8 @@ final class SkaterService
             $this->pdo->beginTransaction();
             $statement->execute([
                 'club_id' => $clubId,
-                'gender_id' => $this->genderId($input['gender_id'] ?? null),
+                'gender_id' => $genderId,
+                'gender_text' => $genderText,
                 'skate_canada_number' => $this->skateCanadaNumber($input['skate_canada_number'] ?? null),
                 'first_name' => $firstName,
                 'last_name' => $lastName,
@@ -454,8 +466,8 @@ final class SkaterService
                 $rowErrors[] = 'Birthdate is required and must be a valid date';
             }
             $gender = trim((string) ($row['Gender'] ?? ''));
-            if ($gender === '') {
-                $rowErrors[] = 'Gender is required';
+            if (mb_strlen($gender) > 80) {
+                $rowErrors[] = 'Gender must be 80 characters or fewer';
             }
             if ($sku === '') {
                 $rowErrors[] = 'Registered Program SKU is required';
@@ -467,11 +479,6 @@ final class SkaterService
             } catch (InvalidArgumentException $exception) {
                 $number = null;
                 $rowErrors[] = 'Skate Canada Number must contain no more than 100 letters or numbers, or be blank';
-            }
-            try {
-                $this->importGenderId($gender, $genderMap);
-            } catch (InvalidArgumentException $exception) {
-                $rowErrors[] = 'Gender is not configured in CAT';
             }
             if ($rowErrors !== []) {
                 $errorCount++;
@@ -532,11 +539,11 @@ final class SkaterService
             );
             $insert = $this->pdo->prepare(
                 'INSERT INTO skater (
-                    club_id, gender_id, skate_canada_number, first_name, last_name, date_of_birth,
+                    club_id, gender_id, gender_text, skate_canada_number, first_name, last_name, date_of_birth,
                     parent_guardian_name, parent_guardian_email, parent_guardian_phone, medical_notes,
                     active, created_by_user_id, updated_by_user_id
                  ) VALUES (
-                    :club_id, :gender_id, :skate_canada_number, :first_name, :last_name, :date_of_birth,
+                    :club_id, :gender_id, :gender_text, :skate_canada_number, :first_name, :last_name, :date_of_birth,
                     :parent_guardian_name, :parent_guardian_email, :parent_guardian_phone, :medical_notes,
                     1, :created_by_user_id, :updated_by_user_id
                  )'
@@ -544,6 +551,7 @@ final class SkaterService
             $update = $this->pdo->prepare(
                 'UPDATE skater
                  SET gender_id = :gender_id,
+                     gender_text = :gender_text,
                      skate_canada_number = :skate_canada_number,
                      first_name = :first_name,
                      last_name = :last_name,
@@ -605,8 +613,9 @@ final class SkaterService
                 }
                 $processedImportRows[$importRowKey] = true;
                 $skaterId = null;
+                $backfillsNumber = false;
                 foreach ($importedIdentityIds[$identityKey] ?? [] as $candidate) {
-                    if ($this->sameImportNumber($candidate['number'], $number)) {
+                    if ($this->sameImportNumber($candidate['skate_canada_number'], $number)) {
                         $skaterId = $candidate['id'];
                         break;
                     }
@@ -618,19 +627,25 @@ final class SkaterService
                         'last_name' => $row['last_name'],
                         'date_of_birth' => $row['date_of_birth'],
                     ]);
-                    foreach ($findByIdentity->fetchAll() as $candidate) {
-                        if ($this->sameImportNumber($candidate['skate_canada_number'], $number)) {
-                            $skaterId = (int) $candidate['id'];
-                            break;
-                        }
+                    $identityCandidates = $findByIdentity->fetchAll();
+                    $findByIdentity->closeCursor();
+                    $identityMatch = $this->importIdentityMatch($identityCandidates, $number);
+                    if ($identityMatch['ambiguous_blank']) {
+                        throw new InvalidArgumentException(
+                            "Row {$row['_row_number']}: more than one existing skater has this name and birthdate with a blank Skate Canada Number. Merge or correct those records before importing."
+                        );
                     }
+                    $skaterId = $identityMatch['id'];
+                    $backfillsNumber = $identityMatch['backfills_number'];
                 }
-                if ($skaterId === null && $number !== null) {
+                if (($skaterId === null || $backfillsNumber) && $number !== null) {
                     $findByNumber->execute([
                         'club_id' => $clubId,
                         'skate_canada_number' => $number,
                     ]);
-                    if ($findByNumber->fetchColumn() !== false) {
+                    $numberOwnerId = $findByNumber->fetchColumn();
+                    $findByNumber->closeCursor();
+                    if ($numberOwnerId !== false && (int) $numberOwnerId !== $skaterId) {
                         throw new InvalidArgumentException(
                             "Row {$row['_row_number']}: Skate Canada Number belongs to a skater with a different name or birthdate."
                         );
@@ -641,6 +656,7 @@ final class SkaterService
                 $parameters = [
                     'club_id' => $clubId,
                     'gender_id' => $genderId,
+                    'gender_text' => $this->genderText($row['gender']),
                     'skate_canada_number' => $number,
                     'first_name' => $row['first_name'],
                     'last_name' => $row['last_name'],
@@ -656,15 +672,19 @@ final class SkaterService
                     $skaterId = (int) $this->pdo->lastInsertId();
                     $this->recordAuditEvent($skaterId, 'ADDED', 'Skater record added by import.', $userId);
                     $created++;
-                    $importedIdentityIds[$identityKey][] = ['id' => $skaterId, 'number' => $number];
                 } else {
                     $update->execute($parameters + ['id' => $skaterId]);
                     $updated++;
                 }
+                $importedIdentityIds[$identityKey][$skaterId] = [
+                    'id' => $skaterId,
+                    'skate_canada_number' => $number,
+                ];
 
                 if (!isset($sessionIds[$row['sku']])) {
                     $findSession->execute(['sku' => $row['sku']]);
                     $session = $findSession->fetch() ?: null;
+                    $findSession->closeCursor();
                     if ($session !== null && (int) $session['club_id'] !== $clubId) {
                         throw new InvalidArgumentException("Row {$row['_row_number']}: the program SKU belongs to another club.");
                     }
@@ -721,8 +741,10 @@ final class SkaterService
              WHERE id = :season_id AND club_id = :club_id AND deleted_at IS NULL'
         );
         $statement->execute(['season_id' => $seasonId, 'club_id' => $clubId]);
+        $count = (int) $statement->fetchColumn();
+        $statement->closeCursor();
 
-        return (int) $statement->fetchColumn() === 1;
+        return $count === 1;
     }
 
     /** @return list<array<string, mixed>> */
@@ -926,7 +948,7 @@ final class SkaterService
     private function importGenderId(string $value, array $map): ?int
     {
         if ($value === '') {
-            return null;
+            return $map['unspecified'] ?? null;
         }
         $key = strtolower($value);
         if (isset($map[$key])) {
@@ -937,7 +959,7 @@ final class SkaterService
             return $map[$aliases[$key]];
         }
 
-        throw new InvalidArgumentException("The gender '{$value}' is not configured in CAT.");
+        return $map['unspecified'] ?? null;
     }
 
     private function sameImportNumber(?string $left, ?string $right): bool
@@ -945,6 +967,46 @@ final class SkaterService
         return $left !== null && $right !== null
             ? strtoupper($left) === strtoupper($right)
             : $left === null && $right === null;
+    }
+
+    /**
+     * @param list<array{id:mixed, skate_canada_number:mixed}> $candidates
+     * @return array{id:?int, backfills_number:bool, ambiguous_blank:bool}
+     */
+    private function importIdentityMatch(array $candidates, ?string $number): array
+    {
+        foreach ($candidates as $candidate) {
+            $candidateNumber = $candidate['skate_canada_number'] === null
+                ? null
+                : trim((string) $candidate['skate_canada_number']);
+            if ($this->sameImportNumber($candidateNumber, $number)) {
+                return [
+                    'id' => (int) $candidate['id'],
+                    'backfills_number' => false,
+                    'ambiguous_blank' => false,
+                ];
+            }
+        }
+
+        if ($number !== null) {
+            $blankCandidates = array_values(array_filter(
+                $candidates,
+                static fn (array $candidate): bool => $candidate['skate_canada_number'] === null
+                    || trim((string) $candidate['skate_canada_number']) === ''
+            ));
+            if (count($blankCandidates) === 1) {
+                return [
+                    'id' => (int) $blankCandidates[0]['id'],
+                    'backfills_number' => true,
+                    'ambiguous_blank' => false,
+                ];
+            }
+            if (count($blankCandidates) > 1) {
+                return ['id' => null, 'backfills_number' => false, 'ambiguous_blank' => true];
+            }
+        }
+
+        return ['id' => null, 'backfills_number' => false, 'ambiguous_blank' => false];
     }
 
     public function markSkillAchieved(
@@ -2321,6 +2383,16 @@ final class SkaterService
         }
 
         return (int) $genderId;
+    }
+
+    private function genderText($value): ?string
+    {
+        $gender = trim((string) $value);
+        if (mb_strlen($gender) > 80) {
+            throw new InvalidArgumentException('Gender must be 80 characters or fewer.');
+        }
+
+        return $gender === '' ? null : $gender;
     }
 
     private function nullable($value): ?string

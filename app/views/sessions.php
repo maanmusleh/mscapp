@@ -175,6 +175,7 @@ foreach ($scheduleData['seasons'] as $season) {
                     <code>Birthdate</code>, and <code>Registered Program SKU</code>.
                     Optional mapped columns include <code>Member Names</code>, <code>Member Email</code>,
                     <code>Member Telephone</code>, <code>Skate Canada Number</code>, and <code>Notes</code>. Other columns are ignored.
+                    Gender accepts any text up to 80 characters and is displayed as entered.
                     The import validates every row before saving anything.
                 </div>
                 <a class="template-link" href="<?= e(url('imports/template.csv')) ?>">Download CSV template</a>
