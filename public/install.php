@@ -97,7 +97,7 @@ if (!$isHttps && !$isLocal) {
             'session' => [
                 'name' => 'cat_session',
                 'secure' => $isHttps,
-                'lifetime_seconds' => 3600,
+                'lifetime_seconds' => 5400,
                 'absolute_lifetime_seconds' => 43200,
             ],
             'database' => ['dsn' => $dsn, 'username' => $values['username'], 'password' => $dbPassword],

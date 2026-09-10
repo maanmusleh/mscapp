@@ -19,7 +19,7 @@ final class Auth
         }
 
         $now = time();
-        $idleLifetime = max(300, (int) config('session.lifetime_seconds', 3600));
+        $idleLifetime = max(300, (int) config('session.lifetime_seconds', 5400));
         $absoluteLifetime = max($idleLifetime, (int) config('session.absolute_lifetime_seconds', 43200));
         $lastActivity = filter_var($_SESSION['last_activity_at'] ?? null, FILTER_VALIDATE_INT);
         $startedAt = filter_var($_SESSION['session_started_at'] ?? null, FILTER_VALIDATE_INT);

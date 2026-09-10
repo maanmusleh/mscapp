@@ -18,7 +18,7 @@ return [
     'session' => [
         'name' => 'cat_session',
         'secure' => true,
-        'lifetime_seconds' => 3600,
+        'lifetime_seconds' => 5400,
         'absolute_lifetime_seconds' => 43200,
     ],
     'database' => [

@@ -62,10 +62,12 @@ if (PHP_SAPI !== 'cli' && session_status() !== PHP_SESSION_ACTIVE) {
         header('Strict-Transport-Security: ' . $hsts);
     }
 
+    $idleLifetime = max(300, (int) config('session.lifetime_seconds', 5400));
+    $absoluteLifetime = max($idleLifetime, (int) config('session.absolute_lifetime_seconds', 43200));
     session_name((string) config('session.name', 'cat_session'));
-    ini_set('session.gc_maxlifetime', (string) config('session.lifetime_seconds', 3600));
+    ini_set('session.gc_maxlifetime', (string) $idleLifetime);
     session_set_cookie_params([
-        'lifetime' => 0,
+        'lifetime' => $absoluteLifetime,
         'path' => '/',
         'domain' => '',
         'secure' => (bool) config('session.secure', false),
@@ -76,4 +78,19 @@ if (PHP_SAPI !== 'cli' && session_status() !== PHP_SESSION_ACTIVE) {
     ini_set('session.cookie_httponly', '1');
     session_start();
     Auth::enforceSessionLifetime();
+
+    $hasSecurityContext = is_array($_SESSION['auth_user'] ?? null)
+        || filter_var($_SESSION['pending_totp_user_id'] ?? null, FILTER_VALIDATE_INT) !== false;
+    if ($hasSecurityContext && !headers_sent()) {
+        $sessionStartedAt = filter_var($_SESSION['session_started_at'] ?? null, FILTER_VALIDATE_INT);
+        $cookieExpiresAt = ($sessionStartedAt === false ? time() : $sessionStartedAt) + $absoluteLifetime;
+        setcookie(session_name(), session_id(), [
+            'expires' => $cookieExpiresAt,
+            'path' => '/',
+            'domain' => '',
+            'secure' => (bool) config('session.secure', false),
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+    }
 }
