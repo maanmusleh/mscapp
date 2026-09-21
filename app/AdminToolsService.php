@@ -6,6 +6,10 @@ final class AdminToolsService
 {
     private PDO $pdo;
     private const GROUP_COLOURS_KEY = 'group_colours';
+    private const CHAT_RETENTION_HOURS_KEY = 'rink_chat_retention_hours';
+    private const RESTRICT_COACH_SESSION_ACCESS_KEY = 'restrict_coach_session_access';
+    private const DEFAULT_CHAT_RETENTION_HOURS = 12;
+    private const MAX_CHAT_RETENTION_DAYS = 365;
     private const MAX_RESTORE_BYTES = 250 * 1024 * 1024;
 
     private const DEFAULT_GROUP_COLOURS = [
@@ -57,6 +61,118 @@ final class AdminToolsService
             'time_zone' => $timeZone,
             'user_id' => $userId,
             'club_id' => $clubId,
+        ]);
+    }
+
+    /** @return array{days:int,hours:int,total_hours:int} */
+    public function chatRetentionSettings(int $clubId): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT setting_value
+             FROM application_setting
+             WHERE club_id = :club_id AND setting_key = :setting_key
+             LIMIT 1'
+        );
+        $statement->execute([
+            'club_id' => $clubId,
+            'setting_key' => self::CHAT_RETENTION_HOURS_KEY,
+        ]);
+        $totalHours = filter_var($statement->fetchColumn(), FILTER_VALIDATE_INT, [
+            'options' => [
+                'min_range' => 1,
+                'max_range' => (self::MAX_CHAT_RETENTION_DAYS * 24) + 23,
+            ],
+        ]);
+        if (!is_int($totalHours)) {
+            $totalHours = self::DEFAULT_CHAT_RETENTION_HOURS;
+        }
+
+        return [
+            'days' => intdiv($totalHours, 24),
+            'hours' => $totalHours % 24,
+            'total_hours' => $totalHours,
+        ];
+    }
+
+    public function updateChatRetentionSettings(int $clubId, int $userId, array $input): void
+    {
+        $days = filter_var($input['chat_retention_days'] ?? null, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 0, 'max_range' => self::MAX_CHAT_RETENTION_DAYS],
+        ]);
+        $hours = filter_var($input['chat_retention_hours'] ?? null, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 0, 'max_range' => 23],
+        ]);
+        if (!is_int($days) || !is_int($hours)) {
+            throw new InvalidArgumentException('Enter days from 0 to 365 and hours from 0 to 23.');
+        }
+
+        $totalHours = ($days * 24) + $hours;
+        if ($totalHours < 1) {
+            throw new InvalidArgumentException('Message retention must be at least 1 hour.');
+        }
+
+        $statement = $this->pdo->prepare(
+            'INSERT INTO application_setting (
+                club_id, setting_key, setting_value, value_type, description,
+                created_by_user_id, updated_by_user_id
+             ) VALUES (
+                :club_id, :setting_key, :setting_value, "integer", :description,
+                :created_by_user_id, :updated_by_user_id
+             ) ON DUPLICATE KEY UPDATE
+                setting_value = VALUES(setting_value),
+                value_type = VALUES(value_type),
+                description = VALUES(description),
+                updated_by_user_id = VALUES(updated_by_user_id)'
+        );
+        $statement->execute([
+            'club_id' => $clubId,
+            'setting_key' => self::CHAT_RETENTION_HOURS_KEY,
+            'setting_value' => (string) $totalHours,
+            'description' => 'Default retention time in hours for new Coach App chat messages.',
+            'created_by_user_id' => $userId,
+            'updated_by_user_id' => $userId,
+        ]);
+    }
+
+    public function coachSessionAccessRestricted(int $clubId): bool
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT setting_value
+             FROM application_setting
+             WHERE club_id = :club_id
+               AND setting_key = :setting_key
+             LIMIT 1'
+        );
+        $statement->execute([
+            'club_id' => $clubId,
+            'setting_key' => self::RESTRICT_COACH_SESSION_ACCESS_KEY,
+        ]);
+        return (string) $statement->fetchColumn() === '1';
+    }
+
+    public function updateCoachSessionAccessRestriction(int $clubId, int $userId, array $input): void
+    {
+        $restricted = !empty($input['restrict_coach_session_access']);
+        $statement = $this->pdo->prepare(
+            'INSERT INTO application_setting (
+                club_id, setting_key, setting_value, value_type, description,
+                created_by_user_id, updated_by_user_id
+             ) VALUES (
+                :club_id, :setting_key, :setting_value, "boolean", :description,
+                :created_by_user_id, :updated_by_user_id
+             ) ON DUPLICATE KEY UPDATE
+                setting_value = VALUES(setting_value),
+                value_type = VALUES(value_type),
+                description = VALUES(description),
+                updated_by_user_id = VALUES(updated_by_user_id)'
+        );
+        $statement->execute([
+            'club_id' => $clubId,
+            'setting_key' => self::RESTRICT_COACH_SESSION_ACCESS_KEY,
+            'setting_value' => $restricted ? '1' : '0',
+            'description' => 'Restrict Coach App sessions to colour groups assigned to each coach account.',
+            'created_by_user_id' => $userId,
+            'updated_by_user_id' => $userId,
         ]);
     }
 

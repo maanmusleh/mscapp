@@ -2398,6 +2398,7 @@
                         <div><h3>EDIT SKATER RECORD</h3></div>
                     </div>
                     <form class="drawer-edit-form" data-skater-edit>
+                        <input type="hidden" name="updated_at" value="${escapeHtml(skater.updated_at || '')}">
                         <div class="form-grid">
                             ${inputField('first_name', 'First name', skater.first_name)}
                             ${inputField('last_name', 'Last name', skater.last_name)}

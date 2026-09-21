@@ -140,6 +140,25 @@
         });
     });
 
+    document.querySelectorAll('[data-group-coaches-open]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const dialog = document.getElementById(button.dataset.groupCoachesOpen || '');
+            if (dialog instanceof HTMLDialogElement) dialog.showModal();
+        });
+    });
+
+    document.querySelectorAll('[data-group-coaches-close]').forEach((button) => {
+        button.addEventListener('click', () => {
+            button.closest('dialog')?.close();
+        });
+    });
+
+    document.querySelectorAll('.group-coaches-dialog').forEach((dialog) => {
+        dialog.addEventListener('click', (event) => {
+            if (event.target === dialog) dialog.close();
+        });
+    });
+
     document.querySelectorAll('.file-drop input[type="file"]').forEach((input) => {
         input.addEventListener('change', () => {
             const label = input.closest('.file-drop');

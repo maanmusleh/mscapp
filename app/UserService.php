@@ -107,7 +107,11 @@ final class UserService
         $targetUserId = $this->userId($publicId);
         $statement = $this->pdo->prepare(
             'UPDATE app_user
-             SET active = 0, deleted_at = UTC_TIMESTAMP(), updated_by_user_id = :admin_user_id
+             SET active = 0,
+                 username = CONCAT("deleted-", public_id),
+                 email = NULL,
+                 deleted_at = UTC_TIMESTAMP(),
+                 updated_by_user_id = :admin_user_id
              WHERE public_id = :public_id AND deleted_at IS NULL'
         );
         $statement->execute(['admin_user_id' => $adminUserId, 'public_id' => $publicId]);

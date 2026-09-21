@@ -34,6 +34,9 @@ final class SkaterService
         if ($required['first_name'] === '' || $required['last_name'] === '') {
             throw new InvalidArgumentException('First and last name are required.');
         }
+        if (mb_strlen($required['first_name']) > 100 || mb_strlen($required['last_name']) > 100) {
+            throw new InvalidArgumentException('First and last name must be 100 characters or fewer.');
+        }
         if (!$this->validDate($required['date_of_birth'])) {
             throw new InvalidArgumentException('Date of birth must be a valid date.');
         }
@@ -44,6 +47,7 @@ final class SkaterService
             ? $this->importGenderId($genderText ?? '', $this->importGenderMap())
             : $this->genderId($input['gender_id'] ?? null);
 
+        $expectedUpdatedAt = $this->version($input['updated_at'] ?? null);
         $statement = $this->pdo->prepare(
             'UPDATE skater
              SET
@@ -65,7 +69,18 @@ final class SkaterService
                AND deleted_at IS NULL'
         );
 
+        $this->pdo->beginTransaction();
         try {
+            $current = $this->pdo->prepare(
+                'SELECT updated_at FROM skater
+                 WHERE club_id = :club_id AND public_id = :public_id AND deleted_at IS NULL
+                 FOR UPDATE'
+            );
+            $current->execute(['club_id' => $clubId, 'public_id' => $publicId]);
+            $currentVersion = $current->fetchColumn();
+            if ($currentVersion === false || !hash_equals($expectedUpdatedAt, (string) $currentVersion)) {
+                throw new InvalidArgumentException('This skater was changed or removed by another user. Refresh the page and try again.');
+            }
             $statement->execute([
                 'skate_canada_number' => $skateCanadaNumber,
                 'first_name' => $required['first_name'],
@@ -83,11 +98,18 @@ final class SkaterService
                 'club_id' => $clubId,
                 'public_id' => $publicId,
             ]);
+            $this->pdo->commit();
         } catch (PDOException $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
             if ($exception->getCode() === '23000') {
-                throw new InvalidArgumentException(
-                    'That Skate Canada number is already assigned to another skater.'
-                );
+                throw new InvalidArgumentException($this->duplicateSkaterMessage($exception));
+            }
+            throw $exception;
+        } catch (Throwable $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
             }
             throw $exception;
         }
@@ -190,9 +212,7 @@ final class SkaterService
                 $this->pdo->rollBack();
             }
             if ($exception instanceof PDOException && $exception->getCode() === '23000') {
-                throw new InvalidArgumentException(
-                    'That Skate Canada number is already assigned to another skater.'
-                );
+                throw new InvalidArgumentException($this->duplicateSkaterMessage($exception));
             }
             throw $exception;
         }
@@ -237,9 +257,29 @@ final class SkaterService
                 ]);
             }
 
+            // A deleted profile must not retain active session membership.  Keeping
+            // it active is invisible while the profile is deleted, but would make
+            // old sessions silently reappear if the record were ever restored.
+            $deactivateEnrollments = $this->pdo->prepare(
+                "UPDATE skater_enrollment
+                 SET active = 0, updated_by_user_id = ?
+                 WHERE active = 1
+                   AND deleted_at IS NULL
+                   AND skater_id IN (
+                       SELECT id FROM skater
+                       WHERE club_id = ?
+                         AND deleted_at IS NULL
+                         AND public_id IN ({$placeholders})
+                   )"
+            );
+            $deactivateEnrollments->execute([$userId, $clubId, ...$publicIds]);
+
             $statement = $this->pdo->prepare(
                 "UPDATE skater
-                 SET active = 0, deleted_at = UTC_TIMESTAMP(), updated_by_user_id = ?
+                 SET active = 0,
+                     skate_canada_number = NULL,
+                     deleted_at = UTC_TIMESTAMP(),
+                     updated_by_user_id = ?
                  WHERE club_id = ? AND deleted_at IS NULL AND public_id IN ({$placeholders})"
             );
             $statement->execute([$userId, $clubId, ...$publicIds]);
@@ -285,10 +325,16 @@ final class SkaterService
             $requestedGroups[(int) $sessionId] = $groupId === null ? null : (int) $groupId;
         }
 
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) {
+            $this->pdo->beginTransaction();
+        }
+        try {
         $skater = $this->pdo->prepare(
             'SELECT id FROM skater
              WHERE club_id = :club_id AND public_id = :public_id AND deleted_at IS NULL
-             LIMIT 1'
+             LIMIT 1
+             FOR UPDATE'
         );
         $skater->execute(['club_id' => $clubId, 'public_id' => $publicId]);
         $skaterId = $skater->fetchColumn();
@@ -305,7 +351,8 @@ final class SkaterService
                AND pg.deleted_at IS NULL
              WHERE ps.club_id = :club_id
                AND ps.active = 1
-               AND ps.deleted_at IS NULL'
+               AND ps.deleted_at IS NULL
+             FOR UPDATE'
         );
         $sessionRows->execute(['club_id' => $clubId]);
         $availableGroups = [];
@@ -333,7 +380,8 @@ final class SkaterService
                AND e.deleted_at IS NULL
                AND ps.club_id = :club_id
                AND ps.active = 1
-               AND ps.deleted_at IS NULL'
+               AND ps.deleted_at IS NULL
+             FOR UPDATE'
         );
         $enrollments->execute(['skater_id' => $skaterId, 'club_id' => $clubId]);
         $existing = [];
@@ -371,11 +419,6 @@ final class SkaterService
         );
 
         $changedSessions = 0;
-        $ownsTransaction = !$this->pdo->inTransaction();
-        if ($ownsTransaction) {
-            $this->pdo->beginTransaction();
-        }
-        try {
             foreach ($existing as $sessionId => $enrollment) {
                 if ((int) $enrollment['active'] === 1 && !array_key_exists($sessionId, $requestedGroups)) {
                     $deactivate->execute(['user_id' => $userId, 'enrollment_id' => $enrollment['id']]);
@@ -527,15 +570,19 @@ final class SkaterService
                    AND first_name = :first_name
                    AND last_name = :last_name
                    AND date_of_birth = :date_of_birth
+                   AND deleted_at IS NULL
                  ORDER BY id
-                 LIMIT 20'
+                 LIMIT 20
+                 FOR UPDATE'
             );
             $findByNumber = $this->pdo->prepare(
                 'SELECT id
                  FROM skater
                  WHERE club_id = :club_id
                    AND skate_canada_number = :skate_canada_number
-                 LIMIT 1'
+                   AND deleted_at IS NULL
+                 LIMIT 1
+                 FOR UPDATE'
             );
             $insert = $this->pdo->prepare(
                 'INSERT INTO skater (
@@ -561,7 +608,6 @@ final class SkaterService
                      parent_guardian_phone = :parent_guardian_phone,
                      medical_notes = :medical_notes,
                      active = 1,
-                     deleted_at = NULL,
                      updated_by_user_id = :updated_by_user_id
                  WHERE id = :id AND club_id = :club_id'
             );
@@ -569,7 +615,8 @@ final class SkaterService
                 'SELECT id, season_id, club_id, deleted_at
                  FROM program_session
                  WHERE sku = :sku
-                 LIMIT 1'
+                 LIMIT 1
+                 FOR UPDATE'
             );
             $restoreSession = $this->pdo->prepare(
                 'UPDATE program_session
@@ -1019,7 +1066,8 @@ final class SkaterService
             throw new InvalidArgumentException('Choose a valid skill.');
         }
 
-        $this->pdo->beginTransaction();
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) $this->pdo->beginTransaction();
 
         try {
             $context = $this->resolveManualAssessmentTarget(
@@ -1167,11 +1215,11 @@ final class SkaterService
                 }
             }
 
-            $this->pdo->commit();
+            if ($ownsTransaction) $this->pdo->commit();
 
             return ['automatically_completed_skill_ids' => $automaticallyCompletedSkillIds];
         } catch (Throwable $exception) {
-            if ($this->pdo->inTransaction()) {
+            if ($ownsTransaction && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
             if ($exception instanceof PDOException && $exception->getCode() === '23000') {
@@ -1321,7 +1369,8 @@ final class SkaterService
             $ribbonId,
             !$overrideIneligible
         );
-        $this->pdo->beginTransaction();
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) $this->pdo->beginTransaction();
 
         try {
             $completedSkillIds = $overrideIneligible
@@ -1422,11 +1471,11 @@ final class SkaterService
                 throw new RuntimeException('The ribbon award timestamp could not be read.');
             }
 
-            $this->pdo->commit();
+            if ($ownsTransaction) $this->pdo->commit();
 
             return ['awarded_at' => $awardedAt, 'completed_skill_ids' => $completedSkillIds];
         } catch (Throwable $exception) {
-            if ($this->pdo->inTransaction()) {
+            if ($ownsTransaction && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
             if ($exception instanceof PDOException && $exception->getCode() === '23000') {
@@ -1532,7 +1581,8 @@ final class SkaterService
             $stageId,
             !$overrideIneligible
         );
-        $this->pdo->beginTransaction();
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) $this->pdo->beginTransaction();
 
         try {
             $completedSkillIds = $overrideIneligible
@@ -1632,11 +1682,11 @@ final class SkaterService
                 throw new RuntimeException('The stage badge award timestamp could not be read.');
             }
 
-            $this->pdo->commit();
+            if ($ownsTransaction) $this->pdo->commit();
 
             return ['awarded_at' => $awardedAt, 'completed_skill_ids' => $completedSkillIds];
         } catch (Throwable $exception) {
-            if ($this->pdo->inTransaction()) {
+            if ($ownsTransaction && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
             if ($exception instanceof PDOException && $exception->getCode() === '23000') {
@@ -1939,9 +1989,12 @@ final class SkaterService
         $affectedSkaters = [];
         $updates = [];
         $assignmentCount = 0;
-        $this->pdo->beginTransaction();
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) $this->pdo->beginTransaction();
         try {
             foreach ($enrollmentRows as $enrollment) {
+                $lock = $this->pdo->prepare('SELECT id FROM skater_enrollment WHERE id = ? FOR UPDATE');
+                $lock->execute([$enrollment['enrollment_id']]);
                 $enrollmentSessionId = (int) $enrollment['program_session_id'];
                 $assignmentGroupId = $groupId;
                 if ($groupName !== null) {
@@ -1998,9 +2051,9 @@ final class SkaterService
                         : $assignmentGroupColour,
                 ];
             }
-            $this->pdo->commit();
+            if ($ownsTransaction) $this->pdo->commit();
         } catch (Throwable $exception) {
-            if ($this->pdo->inTransaction()) {
+            if ($ownsTransaction && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
             throw $exception;
@@ -2407,5 +2460,23 @@ final class SkaterService
         $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
 
         return $date !== false && $date->format('Y-m-d') === $value;
+    }
+
+    private function version($value): string
+    {
+        $value = trim((string) $value);
+        if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/D', $value) !== 1) {
+            throw new InvalidArgumentException('This skater was changed or removed by another user. Refresh the page and try again.');
+        }
+        return $value;
+    }
+
+    private function duplicateSkaterMessage(PDOException $exception): string
+    {
+        $detail = strtolower((string) (($exception->errorInfo[2] ?? null) ?: $exception->getMessage()));
+        if (strpos($detail, 'uq_skater_active_identity') !== false) {
+            return 'An active skater with this first name, last name, and date of birth already exists.';
+        }
+        return 'That Skate Canada number is already assigned to another skater.';
     }
 }

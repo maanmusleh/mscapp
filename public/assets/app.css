@@ -997,6 +997,9 @@ body[data-totp-policy="UNAVAILABLE"] .totp-card { display: none; }
 .user-totp-reset { margin-top: 7px; }
 .user-totp-reset .button { min-height: 30px; padding-inline: 9px; font-size: .7rem; }
 .user-access-toggle .button { min-height: 30px; padding-inline: 9px; font-size: .7rem; }
+.coach-session-access-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; margin: 0 24px 20px; padding: 14px; border: 1px solid var(--slate-200); border-radius: 10px; background: #fbfdff; }
+.coach-session-access-form .setting-toggle { min-height: 0; padding: 0; border: 0; background: transparent; }
+@media (max-width: 620px) { .coach-session-access-form { grid-template-columns: 1fr; } .coach-session-access-form .button { justify-self: start; } }
 
 .login-activity-card { margin-top: 22px; overflow: hidden; }
 .login-activity-table-wrap { padding: 0 24px; }
@@ -2619,6 +2622,11 @@ tbody .sticky-name small {
 }
 
 .achievement-editor-modal-skill.is-participation input {
+    accent-color: #d3921e;
+}
+
+.achievement-editor-modal-skill.is-pending-sync input,
+.achievement-editor-modal-award-toggle.is-pending-sync input {
     accent-color: #d3921e;
 }
 
@@ -4642,7 +4650,7 @@ body.is-resizing-column .column-resizer::after { background: var(--blue-500); }
 
 .admin-tools-layout { display: grid; grid-template-areas: "group-colours stages" "database database"; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 22px; }
 .admin-tools-layout .admin-colours-card { grid-area: group-colours; }
-.admin-tools-layout .stage-settings-card { grid-area: stages; }
+.admin-tools-layout .admin-tools-settings-column { display: grid; grid-area: stages; gap: 22px; }
 .admin-tools-layout .database-management-card { grid-area: database; }
 .admin-users-card { overflow: visible; }
 .user-management-alert { margin: 0 24px 18px; }
@@ -4655,9 +4663,11 @@ body.is-resizing-column .column-resizer::after { background: var(--blue-500); }
 .admin-users-list { min-width: 0; }
 .admin-users-list > h3 { padding: 22px 24px 15px; margin: 0; border-bottom: 1px solid var(--slate-200); }
 .admin-tools-card { display: grid; align-content: start; gap: 18px; }
-.totp-policy-card { max-width: 620px; margin-bottom: 0; }
+.totp-policy-card, .chat-retention-card { max-width: 620px; margin-bottom: 0; }
 .totp-policy-form { display: flex; align-items: end; gap: 12px; padding: 0 24px 24px; }
 .totp-policy-form label { display: grid; min-width: 180px; gap: 5px; color: var(--slate-600); font-size: .75rem; font-weight: 800; }
+.chat-retention-form { flex-wrap: wrap; }
+.chat-retention-form label { min-width: 90px; }
 .stage-settings-card { max-width: none; margin-bottom: 0; }
 .stage-settings-form { display: grid; justify-items: start; gap: 16px; padding: 0 24px 24px; }
 .stage-settings-form .stage-setting-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); width: 100%; }
@@ -4759,10 +4769,31 @@ body.is-resizing-column .column-resizer::after { background: var(--blue-500); }
 .rink-manager-list { display: grid; width: min(100%, 560px); gap: 7px; }
 .session-rinks-card .rink-row-add { width: min(100%, 560px); box-sizing: border-box; margin: 0; }
 .sessions-main .schedule-admin-card .season-row { grid-template-columns: minmax(180px, 1fr) minmax(140px, .72fr) minmax(140px, .72fr) auto auto auto; width: min(100%, 960px); min-width: 700px; justify-self: start; }
-.sessions-main .schedule-admin-card .session-row { grid-template-columns: minmax(130px, .75fr) minmax(170px, 1fr) minmax(115px, .7fr) minmax(110px, .65fr) minmax(110px, .65fr) minmax(140px, .85fr) 84px 92px; min-width: 980px; }
-.sessions-main .schedule-add.session-row .button-primary { grid-column: 7 / span 2; width: 100%; }
-.session-column-headings { display: grid; grid-template-columns: minmax(130px, .75fr) minmax(170px, 1fr) minmax(115px, .7fr) minmax(110px, .65fr) minmax(110px, .65fr) minmax(140px, .85fr) 84px 92px; gap: 6px; min-width: 980px; color: var(--slate-500); font-size: .58rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.sessions-main .schedule-admin-card .session-row { grid-template-columns: minmax(130px, .75fr) minmax(170px, 1fr) 126px 94px 94px var(--session-rink-width, 120px) minmax(120px, .7fr) 84px 92px; min-width: 1000px; }
+.sessions-main .schedule-add.session-row .button-primary { grid-column: 8 / span 2; width: 100%; }
+.session-column-headings { display: grid; grid-template-columns: minmax(130px, .75fr) minmax(170px, 1fr) 126px 94px 94px var(--session-rink-width, 120px) minmax(120px, .7fr) 84px 92px; gap: 6px; min-width: 1000px; color: var(--slate-500); font-size: .58rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
 .session-column-headings span { padding-left: 8px; text-align: left; white-space: nowrap; }
+.session-coaches-unavailable { align-self: center; padding-left: 8px; color: var(--slate-500); font-size: .7rem; font-style: italic; }
+.group-coaches-dialog { width: min(580px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 32px)); padding: 0; border: 0; border-radius: 14px; box-shadow: 0 24px 56px rgba(15, 23, 42, .28); color: var(--slate-800); }
+.group-coaches-dialog::backdrop { background: rgba(15, 23, 42, .48); }
+.group-coaches-form { display: grid; gap: 20px; padding: 24px; }
+.group-coaches-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.group-coaches-dialog-heading h2 { margin: 0; color: var(--navy-950); font-size: 1.15rem; }
+.group-coaches-dialog-heading p, .group-coaches-empty { margin: 6px 0 0; color: var(--slate-600); font-size: .8rem; line-height: 1.45; }
+.dialog-close { display: grid; flex: 0 0 auto; width: 30px; height: 30px; place-items: center; padding: 0; border: 0; border-radius: 7px; background: var(--slate-100); color: var(--slate-700); font-size: 1.35rem; line-height: 1; cursor: pointer; }
+.dialog-close:hover { background: var(--slate-200); }
+.group-coaches-list { display: grid; gap: 10px; }
+.group-coaches-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, .8fr); align-items: center; gap: 16px; padding: 12px; border: 1px solid var(--slate-200); border-radius: 10px; }
+.group-coaches-colour { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.group-coaches-colour svg { width: 28px; height: 28px; flex: 0 0 auto; }
+.group-coaches-colour span { display: grid; min-width: 0; gap: 2px; }
+.group-coaches-colour strong { overflow: hidden; color: var(--navy-950); font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
+.group-coaches-colour small { color: var(--slate-600); font-size: .72rem; }
+.group-coaches-row select { width: 100%; min-height: 36px; }
+.group-coaches-actions { display: flex; justify-content: flex-end; gap: 9px; }
+@media (max-width: 540px) { .group-coaches-row { grid-template-columns: 1fr; gap: 9px; } .group-coaches-actions { justify-content: stretch; } .group-coaches-actions .button { flex: 1; } }
+.sessions-main .session-row input[type="time"] { padding-right: 8px; }
+.sessions-main .session-row input[type="time"]::-webkit-calendar-picker-indicator { display: none; }
 .schedule-admin-collapsible details > summary { display: flex; align-items: center; justify-content: flex-start; gap: 10px; padding: 20px 24px; cursor: pointer; list-style: none; }
 .schedule-admin-collapsible details > summary::-webkit-details-marker { display: none; }
 .schedule-admin-collapsible details > summary strong { color: var(--navy-950); font-size: 1.1rem; }

@@ -5,8 +5,21 @@ $userInitials = strtoupper(trim(
     . mb_substr(trim((string) ($user['last_name'] ?? '')), 0, 1)
 ) ?: mb_substr($displayName, 0, 2));
 $rinkStateScope = hash('sha256', session_id());
+$rinkWorkerFile = dirname(__DIR__, 2) . '/public/rink-offline-sw.js';
+$rinkWorkerUrl = rtrim((string) config('base_path', ''), '/') . '/rink-offline-sw.js'
+    . (is_file($rinkWorkerFile) ? '?v=' . rawurlencode((string) filemtime($rinkWorkerFile)) : '');
 $days = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 $formatTime = static fn (?string $time): string => $time ? date('g:i a', strtotime($time)) : '';
+$chatRetentionDays = intdiv((int) $chatRetentionHours, 24);
+$chatRetentionRemainingHours = (int) $chatRetentionHours % 24;
+$chatRetentionParts = [];
+if ($chatRetentionDays > 0) {
+    $chatRetentionParts[] = $chatRetentionDays . ' ' . ($chatRetentionDays === 1 ? 'day' : 'days');
+}
+if ($chatRetentionRemainingHours > 0) {
+    $chatRetentionParts[] = $chatRetentionRemainingHours . ' ' . ($chatRetentionRemainingHours === 1 ? 'hour' : 'hours');
+}
+$chatRetentionLabel = implode(' and ', $chatRetentionParts);
 $selectedSession = null;
 foreach ($seasonSessions as $session) {
     if ($session['id'] === $filters['session_id']) {
@@ -121,6 +134,8 @@ $renderRinkNavigator = static function (bool $global = false) use ($filterOption
     <script src="<?= e(asset('badge-icons.js')) ?>" defer></script>
     <script src="<?= e(asset('vendor/pdf-lib.min.js')) ?>" defer></script>
     <?php if (in_array($user['role_code'], ['ADMINISTRATOR', 'REGISTRAR'], true)): ?><script src="<?= e(asset('site-nav.js')) ?>" defer></script><?php endif; ?>
+    <script src="<?= e(asset('rink-offline-model.js')) ?>" defer></script>
+    <script src="<?= e(asset('rink-offline.js')) ?>" defer></script>
     <script src="<?= e(asset('rink-app.js')) ?>" defer></script>
 </head>
 <body
@@ -131,6 +146,13 @@ $renderRinkNavigator = static function (bool $global = false) use ($filterOption
     data-rink-assess-url="<?= e(url('api/rink/assess')) ?>"
     data-rink-chat-url="<?= e(url('api/rink/chat')) ?>"
     data-rink-chat-status-url="<?= e(url('api/rink/chat/status')) ?>"
+    data-rink-role="<?= e($user['role_code']) ?>"
+    data-current-club-id="<?= e((string) $user['club_id']) ?>"
+    data-rink-offline-data-url="<?= e(url('api/rink/offline-data')) ?>"
+    data-rink-offline-sync-url="<?= e(url('api/rink/offline-sync')) ?>"
+    data-rink-worker-url="<?= e($rinkWorkerUrl) ?>"
+    data-rink-page-url="<?= e(url('rink-app')) ?>"
+    data-rink-login-url="<?= e(url('login')) ?>"
     data-current-user-id="<?= e((string) $user['id']) ?>"
     data-rink-can-edit="<?= in_array($user['role_code'], ['ADMINISTRATOR', 'REGISTRAR', 'COACH'], true) ? 'true' : 'false' ?>"
     data-rink-can-customize-chat-expiry="<?= in_array($user['role_code'], ['ADMINISTRATOR', 'REGISTRAR'], true) ? 'true' : 'false' ?>"
@@ -141,7 +163,7 @@ $renderRinkNavigator = static function (bool $global = false) use ($filterOption
     data-rink-report-card-notes-url="<?= e(url('api/rink/report-card-notes')) ?>"
     data-rink-report-card-note-library-url="<?= e(url('api/rink/report-card-note-library')) ?>"
     data-rink-report-card-template-url="<?= e(url('api/rink/report-card-template')) ?>"
-    data-rink-report-card-signature-url="<?= e(url('api/account/report-card-signature')) ?>"
+    data-rink-report-card-coach-url="<?= e(url('api/rink/report-card-coach')) ?>"
     data-club-name="<?= e($user['club_name'] ?? '') ?>"
     data-rink-medical-icon="<?= e(asset('medical-note-icon.png')) ?>"
     data-skate-canada-emblem="<?= e($skateCanadaBadgeAssets['emblem']) ?>"
@@ -177,8 +199,8 @@ $renderRinkNavigator = static function (bool $global = false) use ($filterOption
             <nav class="rink-activity-grid is-workspace" id="rink-activity-bar" aria-label="Rink activities">
                 <a class="rink-activity-card rink-activity-roster <?= $activity === 'roster' ? 'is-active' : '' ?>" href="<?= e($activityUrl('roster')) ?>"><span class="rink-activity-icon" aria-hidden="true">☷</span><strong>Roster</strong><small>Skaters &amp; attendance</small></a>
                 <a class="rink-activity-card rink-activity-skills <?= $activity === 'skills' ? 'is-active' : '' ?>" href="<?= e($activityUrl('skills')) ?>"><span class="rink-activity-icon" aria-hidden="true">★</span><strong>Assess</strong><small>Skills, Ribbons &amp; Badges</small></a>
-                <a class="rink-activity-card rink-activity-chat <?= $activity === 'chat' ? 'is-active' : '' ?>" href="<?= e($activityUrl('chat')) ?>"><span class="rink-activity-icon rink-chat-icon" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="M10 12.5c0-3.6 3-6.5 6.6-6.5h18.8c3.6 0 6.6 2.9 6.6 6.5v13c0 3.6-3 6.5-6.6 6.5H24.8L16 39v-7c-3.4-.3-6-3.1-6-6.5v-13Z"></path><circle cx="18" cy="19" r="2"></circle><circle cx="26" cy="19" r="2"></circle><circle cx="34" cy="19" r="2"></circle></svg></span><strong>Chat <span class="rink-chat-unread" data-rink-chat-unread <?= $chatUnreadCount > 0 ? '' : 'hidden' ?>><?= e((string) $chatUnreadCount) ?></span></strong><small>Session group chat</small></a>
-                <div class="rink-connection-status is-connected" data-rink-connection-status role="status" aria-live="polite"><span class="rink-connection-dot" aria-hidden="true"></span><strong data-rink-connection-label>Connected</strong></div>
+                <a class="rink-activity-card rink-activity-chat <?= $activity === 'chat' ? 'is-active' : '' ?>" href="<?= e($activityUrl('chat')) ?>"><span class="rink-activity-icon rink-chat-icon"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M10 12.5c0-3.6 3-6.5 6.6-6.5h18.8c3.6 0 6.6 2.9 6.6 6.5v13c0 3.6-3 6.5-6.6 6.5H24.8L16 39v-7c-3.4-.3-6-3.1-6-6.5v-13Z"></path><circle cx="18" cy="19" r="2"></circle><circle cx="26" cy="19" r="2"></circle><circle cx="34" cy="19" r="2"></circle></svg><span class="rink-chat-unread" data-rink-chat-unread data-unread-count="<?= e((string) $chatUnreadCount) ?>" role="status" aria-live="polite" aria-atomic="true" aria-label="<?= e($chatUnreadCount . ' unread ' . ($chatUnreadCount === 1 ? 'message' : 'messages')) ?>" <?= $chatUnreadCount > 0 ? '' : 'hidden' ?>><?= e($chatUnreadCount > 99 ? '99+' : (string) $chatUnreadCount) ?></span></span><span class="rink-chat-labels"><strong>Chat</strong><small>Session group chat</small></span></a>
+                <div class="rink-connection-status is-connected" data-rink-connection-status role="status" aria-live="polite"><span class="rink-connection-dot" aria-hidden="true"></span><strong data-rink-connection-label>Connected</strong><span class="rink-offline-status" data-rink-offline-status>Setting up…</span></div>
             </nav>
 
             <div class="rink-activity-page rink-activity-page-<?= e($activity) ?>">
@@ -249,7 +271,7 @@ $renderRinkNavigator = static function (bool $global = false) use ($filterOption
                 <script type="application/json" id="rink-assess-data"><?= json_encode($assessPayload, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) ?></script>
             <?php elseif ($activity === 'chat'): ?>
                 <section class="rink-chat-card" data-rink-chat>
-                    <header><div><span class="eyebrow">Session group chat</span></div><small>Messages are automatically deleted 12 hours after posting.</small></header>
+                    <header><div><span class="eyebrow">Session group chat</span></div><small>Messages are automatically deleted <?= e($chatRetentionLabel) ?> after posting.</small></header>
                     <div class="rink-chat-history" data-rink-chat-history aria-live="polite"></div>
                     <form class="rink-chat-compose" data-rink-chat-form><textarea data-rink-chat-input rows="1" maxlength="1500" placeholder="Write a message to this session…" aria-label="New chat message"></textarea><div class="rink-chat-post-actions"><span class="rink-chat-post-status" data-rink-chat-post-status role="status" hidden>Offline</span><button type="submit" data-rink-chat-post>Post</button></div></form>
                 </section>
@@ -285,7 +307,7 @@ $renderRinkNavigator = static function (bool $global = false) use ($filterOption
         <form data-rink-chat-expiry-form>
             <span class="eyebrow">Message expiry</span>
             <h2 id="rink-chat-expiry-title">Set deletion date and time</h2>
-            <p>Override the normal 12-hour message retention time and choose when this message will be removed from the session chat.</p>
+            <p>Override the normal <?= e($chatRetentionLabel) ?> message retention time and choose when this message will be removed from the session chat.</p>
             <label>Delete message on<input type="datetime-local" data-rink-chat-expiry-input required></label>
             <div class="rink-chat-expiry-actions"><button class="button button-ghost" type="button" data-rink-chat-expiry-cancel>Cancel</button><button class="button button-primary" type="submit">Save expiry</button></div>
         </form>

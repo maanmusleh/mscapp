@@ -6,6 +6,10 @@ final class RinkService
 {
     private PDO $pdo;
     private SkaterService $skaters;
+    private const CHAT_RETENTION_HOURS_KEY = 'rink_chat_retention_hours';
+    private const RESTRICT_COACH_SESSION_ACCESS_KEY = 'restrict_coach_session_access';
+    private const DEFAULT_CHAT_RETENTION_HOURS = 12;
+    private const MAX_CHAT_RETENTION_HOURS = (365 * 24) + 23;
 
     public function __construct(PDO $pdo)
     {
@@ -17,9 +21,8 @@ final class RinkService
      * Enforce the Rink App's object-level authorization boundary.
      *
      * Administrators, editors, and read-only users may view any session in
-     * their club. A coach account linked to a coach record is limited to its
-     * active assignments. Legacy/unlinked coach accounts retain club-wide
-     * Coach App access because account creation does not require a coach link.
+     * their club. Coaches retain club-wide access by default; an administrator
+     * can instead require a colour-group assignment for each opened session.
      */
     public function assertUserSessionAccess(
         array $user,
@@ -44,49 +47,21 @@ final class RinkService
             return;
         }
 
-        $coachId = filter_var($user['coach_id'] ?? null, FILTER_VALIDATE_INT, [
-            'options' => ['min_range' => 1],
-        ]);
-        if (!is_int($coachId)) {
+        if (!$this->coachSessionAccessRestricted($clubId)) {
             return;
         }
 
-        $statement = $this->pdo->prepare(
-            'SELECT assignment.id
-             FROM coach_session_assignment assignment
-             INNER JOIN coach coach
-                ON coach.id = assignment.coach_id
-               AND coach.club_id = :coach_club_id
-               AND coach.active = 1
-               AND coach.deleted_at IS NULL
-             INNER JOIN program_session session
-                ON session.id = assignment.program_session_id
-               AND session.id = :session_id
-               AND session.season_id = :season_id
-               AND session.club_id = :session_club_id
-               AND session.active = 1
-               AND session.deleted_at IS NULL
-             WHERE assignment.coach_id = :coach_id
-               AND assignment.active = 1
-               AND assignment.deleted_at IS NULL
-             LIMIT 1'
-        );
-        $statement->execute([
-            'coach_club_id' => $clubId,
-            'session_club_id' => $clubId,
-            'session_id' => $sessionId,
-            'season_id' => $seasonId,
-            'coach_id' => $coachId,
+        $userId = filter_var($user['id'] ?? null, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 1],
         ]);
-        if ($statement->fetchColumn() === false) {
-            throw new InvalidArgumentException('You are not assigned to that session.');
+        if (!is_int($userId) || !$this->coachHasSessionGroup($clubId, $seasonId, $sessionId, $userId)) {
+            throw new InvalidArgumentException('You are not assigned to a colour group in that session.');
         }
     }
 
     /**
-     * Restrict navigation choices for a linked coach to explicitly assigned
-     * sessions. Non-coach roles and legacy/unlinked coach accounts retain the
-     * club-wide filter options supplied to the method.
+     * When the club setting is enabled, restrict Coach App navigation to
+     * sessions where that coach has a colour-group assignment.
      */
     public function filterOptionsForUser(array $user, array $options): array
     {
@@ -97,26 +72,25 @@ final class RinkService
         $clubId = filter_var($user['club_id'] ?? null, FILTER_VALIDATE_INT, [
             'options' => ['min_range' => 1],
         ]);
-        $coachId = filter_var($user['coach_id'] ?? null, FILTER_VALIDATE_INT, [
-            'options' => ['min_range' => 1],
-        ]);
         if (!is_int($clubId)) {
             return ['seasons' => [], 'sessions' => [], 'groups' => []];
         }
-        if (!is_int($coachId)) {
+        if (!$this->coachSessionAccessRestricted($clubId)) {
             return $options;
+        }
+
+        $userId = filter_var($user['id'] ?? null, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 1],
+        ]);
+        if (!is_int($userId)) {
+            return ['seasons' => [], 'sessions' => [], 'groups' => []];
         }
 
         $statement = $this->pdo->prepare(
             'SELECT session.id
-             FROM coach_session_assignment assignment
-             INNER JOIN coach coach
-                ON coach.id = assignment.coach_id
-               AND coach.club_id = :coach_club_id
-               AND coach.active = 1
-               AND coach.deleted_at IS NULL
+             FROM program_group colour_group
              INNER JOIN program_session session
-                ON session.id = assignment.program_session_id
+                ON session.id = colour_group.program_session_id
                AND session.club_id = :session_club_id
                AND session.active = 1
                AND session.deleted_at IS NULL
@@ -125,15 +99,14 @@ final class RinkService
                AND season.club_id = :season_club_id
                AND season.active = 1
                AND season.deleted_at IS NULL
-             WHERE assignment.coach_id = :coach_id
-               AND assignment.active = 1
-               AND assignment.deleted_at IS NULL'
+             WHERE colour_group.report_card_coach_user_id = :user_id
+               AND colour_group.active = 1
+               AND colour_group.deleted_at IS NULL'
         );
         $statement->execute([
-            'coach_club_id' => $clubId,
             'session_club_id' => $clubId,
             'season_club_id' => $clubId,
-            'coach_id' => $coachId,
+            'user_id' => $userId,
         ]);
         $sessionIds = array_map('intval', $statement->fetchAll(PDO::FETCH_COLUMN));
         $sessions = array_values(array_filter(
@@ -164,6 +137,48 @@ final class RinkService
                 )
             )),
         ];
+    }
+
+    private function coachSessionAccessRestricted(int $clubId): bool
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT setting_value
+             FROM application_setting
+             WHERE club_id = :club_id
+               AND setting_key = :setting_key
+             LIMIT 1'
+        );
+        $statement->execute([
+            'club_id' => $clubId,
+            'setting_key' => self::RESTRICT_COACH_SESSION_ACCESS_KEY,
+        ]);
+        return (string) $statement->fetchColumn() === '1';
+    }
+
+    private function coachHasSessionGroup(int $clubId, int $seasonId, int $sessionId, int $userId): bool
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT colour_group.id
+             FROM program_group colour_group
+             INNER JOIN program_session session
+                ON session.id = colour_group.program_session_id
+               AND session.id = :session_id
+               AND session.season_id = :season_id
+               AND session.club_id = :club_id
+               AND session.active = 1
+               AND session.deleted_at IS NULL
+             WHERE colour_group.report_card_coach_user_id = :user_id
+               AND colour_group.active = 1
+               AND colour_group.deleted_at IS NULL
+             LIMIT 1'
+        );
+        $statement->execute([
+            'session_id' => $sessionId,
+            'season_id' => $seasonId,
+            'club_id' => $clubId,
+            'user_id' => $userId,
+        ]);
+        return $statement->fetchColumn() !== false;
     }
 
     public function assertSessionAccess(
@@ -386,6 +401,65 @@ final class RinkService
         ];
     }
 
+    /**
+     * @return array{first_name:string,last_name:string,signature:?string}
+     */
+    public function reportCardCoach(int $clubId, int $seasonId, int $sessionId, string $skaterPublicId): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT assigned_user.first_name, assigned_user.last_name, assigned_user.report_card_signature_png
+             FROM program_session session
+             INNER JOIN skater_enrollment enrollment
+                ON enrollment.program_session_id = session.id
+               AND enrollment.active = 1
+               AND enrollment.deleted_at IS NULL
+             INNER JOIN skater
+                ON skater.id = enrollment.skater_id
+               AND skater.public_id = :skater_public_id
+               AND skater.active = 1
+               AND skater.deleted_at IS NULL
+             LEFT JOIN group_assignment assignment
+                ON assignment.id = (
+                    SELECT latest_assignment.id
+                    FROM group_assignment latest_assignment
+                    WHERE latest_assignment.skater_enrollment_id = enrollment.id
+                    ORDER BY latest_assignment.id DESC
+                    LIMIT 1
+                )
+             LEFT JOIN program_group colour_group
+                ON colour_group.id = assignment.program_group_id
+               AND colour_group.active = 1
+               AND colour_group.deleted_at IS NULL
+             LEFT JOIN app_user assigned_user
+                ON assigned_user.id = colour_group.report_card_coach_user_id
+               AND assigned_user.active = 1
+               AND assigned_user.deleted_at IS NULL
+             WHERE session.id = :session_id
+               AND session.season_id = :season_id
+               AND session.club_id = :club_id
+               AND session.active = 1
+               AND session.deleted_at IS NULL
+             LIMIT 1'
+        );
+        $statement->execute([
+            'club_id' => $clubId,
+            'season_id' => $seasonId,
+            'session_id' => $sessionId,
+            'skater_public_id' => $skaterPublicId,
+        ]);
+        $row = $statement->fetch();
+        if (!is_array($row)) {
+            throw new InvalidArgumentException('This skater is not active in the selected session.');
+        }
+
+        $signature = $row['report_card_signature_png'] ?? null;
+        return [
+            'first_name' => (string) ($row['first_name'] ?? ''),
+            'last_name' => (string) ($row['last_name'] ?? ''),
+            'signature' => is_string($signature) && $signature !== '' ? $signature : null,
+        ];
+    }
+
     /** @return array{messages:list<array<string,mixed>>,unread_count:int} */
     public function chat(int $clubId, int $userId, int $seasonId, int $sessionId, bool $markViewed = false): array
     {
@@ -434,10 +508,31 @@ final class RinkService
         $this->assertSessionAccess($clubId, $seasonId, $sessionId);
         $message = trim($message);
         if ($message === '' || mb_strlen($message) > 1500) throw new InvalidArgumentException('Enter a message of up to 1,500 characters.');
-        $expiry = (new DateTimeImmutable('+12 hours', new DateTimeZone('UTC')));
+        $retentionHours = $this->chatRetentionHours($clubId);
+        $expiry = (new DateTimeImmutable('now', new DateTimeZone('UTC')))
+            ->add(new DateInterval('PT' . $retentionHours . 'H'));
         $statement = $this->pdo->prepare('INSERT INTO rink_chat_message (club_id, program_session_id, app_user_id, message_text, expires_at) VALUES (:club_id, :session_id, :user_id, :message, :expires_at)');
         $statement->execute(['club_id' => $clubId, 'session_id' => $sessionId, 'user_id' => $userId, 'message' => $message, 'expires_at' => $expiry->format('Y-m-d H:i:s')]);
         $this->markChatViewed($userId, $sessionId);
+    }
+
+    public function chatRetentionHours(int $clubId): int
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT setting_value
+             FROM application_setting
+             WHERE club_id = :club_id AND setting_key = :setting_key
+             LIMIT 1'
+        );
+        $statement->execute([
+            'club_id' => $clubId,
+            'setting_key' => self::CHAT_RETENTION_HOURS_KEY,
+        ]);
+        $hours = filter_var($statement->fetchColumn(), FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 1, 'max_range' => self::MAX_CHAT_RETENTION_HOURS],
+        ]);
+
+        return is_int($hours) ? $hours : self::DEFAULT_CHAT_RETENTION_HOURS;
     }
 
     public function editChat(int $clubId, int $userId, int $seasonId, int $sessionId, string $publicId, string $message): void
@@ -584,14 +679,16 @@ final class RinkService
         int $seasonId,
         int $sessionId,
         string $skaterPublicId,
-        bool $present
+        bool $present,
+        ?string $recordedDate = null
     ): array {
         $this->assertSessionAccess($clubId, $seasonId, $sessionId, $skaterPublicId);
         $context = $this->sessionContext($clubId, $seasonId, $sessionId);
         $window = $this->attendanceWindow($context);
-        $attendanceDate = $window['date'];
+        $attendanceDate = $recordedDate ?? $window['date'];
 
-        $this->pdo->beginTransaction();
+        $ownsTransaction = !$this->pdo->inTransaction();
+        if ($ownsTransaction) $this->pdo->beginTransaction();
         try {
             $programDate = $this->pdo->prepare(
                 'SELECT id, cancelled
@@ -665,6 +762,7 @@ final class RinkService
                     :recorded_by_user_id, :notes, :updated_by_user_id
                  )
                  ON DUPLICATE KEY UPDATE
+                    sync_revision = sync_revision + 1,
                     attendance_status_id = VALUES(attendance_status_id),
                     recorded_by_user_id = VALUES(recorded_by_user_id),
                     notes = VALUES(notes),
@@ -679,11 +777,11 @@ final class RinkService
                 'notes' => 'Recorded from the Coach App.',
                 'updated_by_user_id' => $userId,
             ]);
-            $this->pdo->commit();
+            if ($ownsTransaction) $this->pdo->commit();
 
             return ['present' => $present, 'status_code' => (string) $statusRow['code']];
         } catch (Throwable $exception) {
-            if ($this->pdo->inTransaction()) {
+            if ($ownsTransaction && $this->pdo->inTransaction()) {
                 $this->pdo->rollBack();
             }
             throw $exception;

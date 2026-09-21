@@ -29,6 +29,26 @@ if ($requestPath === '//') {
 }
 $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 
+try {
+    $schemaHealth = (new SchemaHealthService(Database::connection()))->inspect();
+    $migrationBundleVersions = SchemaHealthService::migrationBundleVersions($schemaHealth);
+    if ($requestPath === '/schema-migration-download') {
+        if ($method !== 'GET' || $migrationBundleVersions === []) {
+            http_response_code(404);
+            exit('No safe CAT migration bundle is available for this database state.');
+        }
+        download_schema_migration_bundle($migrationBundleVersions);
+    }
+    if (!$schemaHealth['healthy']) {
+        render_schema_migration_required($schemaHealth, $requestPath, $migrationBundleVersions);
+    }
+} catch (Throwable $exception) {
+    error_log('CAT schema health check could not run: ' . $exception->getMessage());
+    http_response_code(503);
+    header('Retry-After: 300');
+    exit('CAT cannot verify its database structure. Check the database connection and server error log.');
+}
+
 if (Auth::check() && !empty($_SESSION['totp_enrollment_required'])
     && !string_starts_with($requestPath, '/account') && $requestPath !== '/logout') {
     redirect('account');
@@ -107,6 +127,9 @@ try {
     }
 
     if ($method === 'POST' && $requestPath === '/login/totp/cancel') {
+        if (!csrf_is_valid($_POST['_token'] ?? null)) {
+            redirect('login');
+        }
         Auth::cancelTotp();
         redirect('login');
     }
@@ -230,7 +253,9 @@ try {
         $clubSettingsFlash = $_SESSION['club_settings_flash'] ?? null;
         $groupColoursFlash = $_SESSION['group_colours_flash'] ?? null;
         $userManagementFlash = $_SESSION['user_management_flash'] ?? null;
+        $coachAccessFlash = $_SESSION['coach_access_flash'] ?? null;
         $totpPolicyFlash = $_SESSION['totp_policy_flash'] ?? null;
+        $chatRetentionFlash = $_SESSION['chat_retention_flash'] ?? null;
         $databaseManagementFlash = $_SESSION['database_management_flash'] ?? null;
         $stageSettingsFlash = $_SESSION['stage_settings_flash'] ?? null;
         $activityPage = filter_var($_GET['activity_page'] ?? 1, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
@@ -238,7 +263,9 @@ try {
         $loginActivityPage = (new LoginActivityService())->page((int) $activityPage, 25);
         unset($_SESSION['group_colours_flash']);
         unset($_SESSION['user_management_flash']);
+        unset($_SESSION['coach_access_flash']);
         unset($_SESSION['totp_policy_flash']);
+        unset($_SESSION['chat_retention_flash']);
         unset($_SESSION['club_settings_flash']);
         unset($_SESSION['database_management_flash']);
         unset($_SESSION['stage_settings_flash']);
@@ -247,6 +274,8 @@ try {
             'groupColours' => $adminTools->groupColours((int) $user['club_id']),
             'clubSettings' => $adminTools->clubSettings((int) $user['club_id']),
             'clubTimeZones' => DateTimeZone::listIdentifiers(),
+            'chatRetention' => $adminTools->chatRetentionSettings((int) $user['club_id']),
+            'coachSessionAccessRestricted' => $adminTools->coachSessionAccessRestricted((int) $user['club_id']),
             'databaseSummary' => $adminTools->databaseSummary((int) $user['club_id']),
             'stages' => $adminTools->stages(),
             'users' => (new UserService(Database::connection()))->users(),
@@ -255,9 +284,11 @@ try {
             'flashes' => consume_flashes(),
             'groupColoursFlash' => is_array($groupColoursFlash) ? $groupColoursFlash : null,
             'userManagementFlash' => is_array($userManagementFlash) ? $userManagementFlash : null,
+            'coachAccessFlash' => is_array($coachAccessFlash) ? $coachAccessFlash : null,
             'totpPolicy' => $totpPolicy,
             'clubSettingsFlash' => is_array($clubSettingsFlash) ? $clubSettingsFlash : null,
             'totpPolicyFlash' => is_array($totpPolicyFlash) ? $totpPolicyFlash : null,
+            'chatRetentionFlash' => is_array($chatRetentionFlash) ? $chatRetentionFlash : null,
             'databaseManagementFlash' => is_array($databaseManagementFlash) ? $databaseManagementFlash : null,
             'stageSettingsFlash' => is_array($stageSettingsFlash) ? $stageSettingsFlash : null,
         ]);
@@ -274,6 +305,21 @@ try {
         redirect('admin-tools#club-settings');
     }
 
+    if ($method === 'POST' && $requestPath === '/admin-tools/coach-session-access') {
+        $user = Auth::requireRole(['ADMINISTRATOR']);
+        if (!csrf_is_valid($_POST['_token'] ?? null)) {
+            $_SESSION['coach_access_flash'] = ['type' => 'error', 'message' => 'The coach-access form expired. Please try again.'];
+            redirect('admin-tools#users');
+        }
+        (new AdminToolsService(Database::connection()))->updateCoachSessionAccessRestriction(
+            (int) $user['club_id'],
+            (int) $user['id'],
+            $_POST
+        );
+        $_SESSION['coach_access_flash'] = ['type' => 'success', 'message' => 'Coach session access updated.'];
+        redirect('admin-tools#users');
+    }
+
     if ($method === 'POST' && $requestPath === '/admin-tools/stages') {
         $user = Auth::requireRole(['ADMINISTRATOR']);
         if (!csrf_is_valid($_POST['_token'] ?? null)) {
@@ -283,6 +329,26 @@ try {
         (new AdminToolsService(Database::connection()))->updateStageSettings((int) $user['id'], $_POST);
         $_SESSION['stage_settings_flash'] = ['type' => 'success', 'message' => 'Enabled stages updated.'];
         redirect('admin-tools#stage-settings');
+    }
+
+    if ($method === 'POST' && $requestPath === '/admin-tools/chat-retention') {
+        $user = Auth::requireRole(['ADMINISTRATOR']);
+        if (!csrf_is_valid($_POST['_token'] ?? null)) {
+            $_SESSION['chat_retention_flash'] = ['type' => 'error', 'message' => 'The message deletion settings form expired. Please try again.'];
+            redirect('admin-tools#chat-retention');
+        }
+        try {
+            (new AdminToolsService(Database::connection()))->updateChatRetentionSettings(
+                (int) $user['club_id'],
+                (int) $user['id'],
+                $_POST
+            );
+        } catch (InvalidArgumentException $exception) {
+            $_SESSION['chat_retention_flash'] = ['type' => 'error', 'message' => $exception->getMessage()];
+            redirect('admin-tools#chat-retention');
+        }
+        $_SESSION['chat_retention_flash'] = ['type' => 'success', 'message' => 'Global message deletion timing updated.'];
+        redirect('admin-tools#chat-retention');
     }
 
     if ($method === 'POST' && $requestPath === '/admin-tools/totp-policy') {
@@ -412,6 +478,8 @@ try {
             $_SESSION['post_login_destination'] = 'rink-app';
         }
         $user = Auth::requireRole(['ADMINISTRATOR', 'REGISTRAR', 'READ_ONLY', 'COACH']);
+        header('X-CAT-Rink-Owner: ' . $user['club_id'] . ':' . $user['id'] . ':' . $user['role_code']);
+        header('Cache-Control: private, no-store, max-age=0');
         $repository = new DashboardRepository(Database::connection());
         $rinkService = new RinkService(Database::connection());
         $filterOptions = $rinkService->filterOptionsForUser(
@@ -490,6 +558,7 @@ try {
         $chatUnreadCount = $sessionId !== null && $activity !== 'chat'
             ? $rinkService->chatUnreadCount((int) $user['club_id'], (int) $user['id'], $sessionId)
             : 0;
+        $chatRetentionHours = $rinkService->chatRetentionHours((int) $user['club_id']);
 
         render('rink-app', [
             'user' => $user,
@@ -497,6 +566,7 @@ try {
             'assessPayload' => $assessPayload,
             'chatPayload' => $chatPayload,
             'chatUnreadCount' => $chatUnreadCount,
+            'chatRetentionHours' => $chatRetentionHours,
             'filterOptions' => $filterOptions,
             'seasonSessions' => $seasonSessions,
             'sessionGroups' => $sessionGroups,
@@ -513,15 +583,53 @@ try {
         ]);
     }
 
+    if (in_array($requestPath, ['/api/rink/offline-data', '/api/rink/offline-sync'], true)) {
+        $user = Auth::requireRole($method === 'GET' ? ['ADMINISTRATOR', 'REGISTRAR', 'READ_ONLY', 'COACH'] : ['ADMINISTRATOR', 'REGISTRAR', 'COACH']);
+        header('Cache-Control: private, no-store, max-age=0');
+        $offline = new RinkOfflineService(Database::connection());
+        if ($method === 'GET' && $requestPath === '/api/rink/offline-data') {
+            json_response($offline->snapshot($user, (int) ($_GET['season_id'] ?? 0), (int) ($_GET['session_id'] ?? 0)));
+        }
+        if ($method === 'POST' && $requestPath === '/api/rink/offline-sync') {
+            $input = request_json();
+            if (!csrf_is_valid($_SERVER['HTTP_X_CSRF_TOKEN'] ?? null)) {
+                json_response(['error' => 'Sign in again to sync your saved changes.'], 419);
+            }
+            $result = $offline->sync($user, $input);
+            json_response($result, !empty($result['conflict']) ? 409 : 200);
+        }
+        json_response(['error' => 'Method not allowed.'], 405);
+    }
+
     if ($method === 'GET' && $requestPath === '/api/rink/status') {
-        Auth::requireRole(['ADMINISTRATOR', 'REGISTRAR', 'READ_ONLY', 'COACH']);
+        $user = Auth::requireRole(['ADMINISTRATOR', 'REGISTRAR', 'READ_ONLY', 'COACH']);
         $pdo = Database::connection();
         $pdo->query('SELECT 1')->fetchColumn();
-        json_response(['connected' => true]);
+        $payload = ['connected' => true, 'user_id' => (int) $user['id'], 'club_id' => (int) $user['club_id'], 'csrf_token' => csrf_token()];
+        $seasonId = filter_var($_GET['season_id'] ?? null, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 1],
+        ]);
+        $sessionId = filter_var($_GET['session_id'] ?? null, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 1],
+        ]);
+        if (is_int($seasonId) && is_int($sessionId)) {
+            $rink = new RinkService($pdo);
+            $rink->assertUserSessionAccess($user, $seasonId, $sessionId);
+            $payload['unread_count'] = $rink->chatUnreadCount(
+                (int) $user['club_id'],
+                (int) $user['id'],
+                $sessionId
+            );
+        }
+        header('Cache-Control: private, no-store, max-age=0');
+        json_response($payload);
     }
 
     if ($method === 'GET' && $requestPath === '/api/rink/roster') {
         $user = Auth::requireRole(['ADMINISTRATOR', 'REGISTRAR', 'READ_ONLY', 'COACH']);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
         $seasonId = filter_var($_GET['season_id'] ?? null, FILTER_VALIDATE_INT, [
             'options' => ['min_range' => 1],
         ]);
@@ -536,13 +644,20 @@ try {
         }
         $rink = new RinkService(Database::connection());
         $rink->assertUserSessionAccess($user, $seasonId, $sessionId);
-        json_response($rink->roster(
+        $payload = $rink->roster(
             (int) $user['club_id'],
             $seasonId,
             $sessionId,
             is_int($groupId) ? $groupId : null,
             ($user['role_code'] ?? '') !== 'READ_ONLY'
-        ));
+        );
+        $payload['unread_count'] = $rink->chatUnreadCount(
+            (int) $user['club_id'],
+            (int) $user['id'],
+            $sessionId
+        );
+        header('Cache-Control: private, no-store, max-age=0');
+        json_response($payload);
     }
 
     if ($method === 'GET' && $requestPath === '/api/rink/assess') {
@@ -583,6 +698,30 @@ try {
         exit;
     }
 
+    if ($method === 'GET' && $requestPath === '/api/rink/report-card-coach') {
+        $user = Auth::requireRole(['ADMINISTRATOR', 'REGISTRAR', 'READ_ONLY', 'COACH']);
+        $seasonId = filter_var($_GET['season_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $sessionId = filter_var($_GET['session_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $skaterPublicId = trim((string) ($_GET['skater_public_id'] ?? ''));
+        if (!is_int($seasonId) || !is_int($sessionId) || $skaterPublicId === '') {
+            throw new InvalidArgumentException('Choose a valid season, session, and skater.');
+        }
+        $rink = new RinkService(Database::connection());
+        $rink->assertUserSessionAccess($user, $seasonId, $sessionId, $skaterPublicId);
+        $coach = $rink->reportCardCoach((int) $user['club_id'], $seasonId, $sessionId, $skaterPublicId);
+        header('X-CAT-Report-Card-Coach-First-Name: ' . rawurlencode($coach['first_name']));
+        header('X-CAT-Report-Card-Coach-Last-Name: ' . rawurlencode($coach['last_name']));
+        header('Cache-Control: private, no-store, max-age=0');
+        if ($coach['signature'] === null) {
+            http_response_code(204);
+            exit;
+        }
+        header('Content-Type: image/png');
+        header('Content-Length: ' . strlen($coach['signature']));
+        echo $coach['signature'];
+        exit;
+    }
+
     if ($method === 'GET' && $requestPath === '/api/rink/chat') {
         $user = Auth::requireRole(['ADMINISTRATOR', 'REGISTRAR', 'READ_ONLY', 'COACH']);
         $seasonId = filter_var($_GET['season_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
@@ -599,6 +738,7 @@ try {
         if (!is_int($seasonId) || !is_int($sessionId)) throw new InvalidArgumentException('Choose a valid season and session.');
         $rink = new RinkService(Database::connection());
         $rink->assertUserSessionAccess($user, $seasonId, $sessionId);
+        header('Cache-Control: private, no-store, max-age=0');
         json_response(['unread_count' => $rink->chatUnreadCount((int) $user['club_id'], (int) $user['id'], $sessionId)]);
     }
     if ($method === 'POST' && $requestPath === '/api/rink/chat') {
@@ -668,57 +808,7 @@ try {
             $sessionId,
             $matches[1]
         );
-        $detail = (new DashboardRepository(Database::connection()))->skaterDetail(
-            (int) $user['club_id'],
-            $matches[1]
-        );
-        if ($detail === null) {
-            json_response(['error' => 'Skater not found.'], 404);
-        }
-        $today = date('Y-m-d');
-        $timestampIsToday = static function (?string $value) use ($today): bool {
-            if ($value === null || $value === '') {
-                return false;
-            }
-            try {
-                return (new DateTimeImmutable($value))
-                    ->setTimezone(new DateTimeZone(date_default_timezone_get()))
-                    ->format('Y-m-d') === $today;
-            } catch (Exception $exception) {
-                return false;
-            }
-        };
-        foreach ($detail['achievement_editor'] as &$stage) {
-            foreach ($stage['ribbons'] as &$ribbon) {
-                foreach ($ribbon['skills'] as &$skill) {
-                    $skill['removable_today'] = !$skill['achieved']
-                        || $skill['achievement_date'] === $today;
-                }
-                unset($skill);
-                $ribbon['removable_today'] = $ribbon['awarded_at'] === null
-                    || $timestampIsToday($ribbon['awarded_at']);
-            }
-            unset($ribbon);
-            $stage['badge_removable_today'] = $stage['badge_awarded_at'] === null
-                || $timestampIsToday($stage['badge_awarded_at']);
-        }
-        unset($stage);
-        $canEditRink = in_array($user['role_code'] ?? '', ['ADMINISTRATOR', 'REGISTRAR', 'COACH'], true);
-        $canViewSensitive = ($user['role_code'] ?? '') !== 'READ_ONLY';
-        if (!$canViewSensitive) {
-            $detail['skater']['parent_guardian_name'] = null;
-            $detail['skater']['parent_guardian_email'] = null;
-            $detail['skater']['parent_guardian_phone'] = null;
-            $detail['skater']['general_notes'] = null;
-            $detail['skater']['medical_notes'] = null;
-            $detail['skater']['report_card_notes'] = null;
-        }
-        $detail['permissions'] = [
-            'can_edit' => false,
-            'can_view_sensitive' => $canViewSensitive,
-            'can_edit_achievements' => $canEditRink,
-        ];
-        $detail['csrf_token'] = csrf_token();
+        $detail = (new RinkOfflineService(Database::connection()))->profile($user, $matches[1]);
         json_response($detail);
     }
 
@@ -966,6 +1056,28 @@ try {
         flash('success', ucfirst(rtrim($resource, 's')) . ' saved.');
         $seasonId = filter_var($_POST['season_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         redirect($resource === 'sessions' && $seasonId !== false ? 'sessions?season_id=' . $seasonId : 'sessions');
+    }
+
+    if ($method === 'POST' && $requestPath === '/sessions/group-coaches') {
+        $user = Auth::requireRole(['ADMINISTRATOR', 'REGISTRAR']);
+        $seasonId = filter_var($_POST['season_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $returnPath = $seasonId === false ? 'sessions' : 'sessions?season_id=' . $seasonId;
+        if (!csrf_is_valid($_POST['_token'] ?? null)) {
+            flash('error', 'The form expired. Please try again.');
+            redirect($returnPath);
+        }
+        $coachUserIds = $_POST['coach_user_id'] ?? [];
+        if (!is_array($coachUserIds)) {
+            throw new InvalidArgumentException('Choose valid coaches for the colour groups.');
+        }
+        (new ScheduleAdminService(Database::connection()))->saveGroupCoaches(
+            (int) $user['club_id'],
+            (int) $user['id'],
+            $_POST['session_id'] ?? null,
+            $coachUserIds
+        );
+        flash('success', 'Colour-group coaches saved.');
+        redirect($returnPath);
     }
 
     if ($method === 'POST' && $requestPath === '/sessions/rinks') {

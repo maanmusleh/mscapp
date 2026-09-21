@@ -19,7 +19,7 @@ final class Auth
         }
 
         $now = time();
-        $idleLifetime = max(300, (int) config('session.lifetime_seconds', 5400));
+        $idleLifetime = max(300, (int) config('session.lifetime_seconds', 7200));
         $absoluteLifetime = max($idleLifetime, (int) config('session.absolute_lifetime_seconds', 43200));
         $lastActivity = filter_var($_SESSION['last_activity_at'] ?? null, FILTER_VALIDATE_INT);
         $startedAt = filter_var($_SESSION['session_started_at'] ?? null, FILTER_VALIDATE_INT);
@@ -51,7 +51,10 @@ final class Auth
             return $freshUser;
         }
 
-        return self::normalizeUserRecord($user);
+        // A missing refreshed record means the account or its club is no longer
+        // active. Never continue authorizing requests from the cached session.
+        unset($_SESSION['auth_user'], $_SESSION['totp_enrollment_required']);
+        return null;
     }
 
     public static function check(): bool

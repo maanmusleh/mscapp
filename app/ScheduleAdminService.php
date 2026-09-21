@@ -15,9 +15,9 @@ final class ScheduleAdminService
     public function data(int $clubId, ?int $selectedSeasonId = null): array
     {
         $statuses = $this->pdo->query('SELECT id, name FROM season_status WHERE active = 1 ORDER BY display_order, name')->fetchAll();
-        $seasons = $this->pdo->prepare('SELECT id, name, NULL AS season_year, NULL AS season_term_id, season_status_id, start_date, end_date, active FROM season WHERE club_id = :club_id AND deleted_at IS NULL ORDER BY CASE WHEN end_date >= CURDATE() THEN 0 ELSE 1 END, CASE WHEN end_date >= CURDATE() THEN start_date END DESC, CASE WHEN end_date < CURDATE() THEN end_date END DESC, name');
+        $seasons = $this->pdo->prepare('SELECT id, name, NULL AS season_year, NULL AS season_term_id, season_status_id, start_date, end_date, active, updated_at FROM season WHERE club_id = :club_id AND deleted_at IS NULL ORDER BY CASE WHEN end_date >= CURDATE() THEN 0 ELSE 1 END, CASE WHEN end_date >= CURDATE() THEN start_date END DESC, CASE WHEN end_date < CURDATE() THEN end_date END DESC, name');
         $seasons->execute(['club_id' => $clubId]);
-        $sessionSql = 'SELECT ps.id, ps.season_id, ps.sku, ps.name, ps.day_of_week, ps.start_time, ps.end_time, ps.location, se.name AS season_name FROM program_session ps INNER JOIN season se ON se.id = ps.season_id WHERE ps.club_id = :club_id AND ps.deleted_at IS NULL';
+        $sessionSql = 'SELECT ps.id, ps.season_id, ps.sku, ps.name, ps.day_of_week, ps.start_time, ps.end_time, ps.location, ps.updated_at, se.name AS season_name FROM program_session ps INNER JOIN season se ON se.id = ps.season_id WHERE ps.club_id = :club_id AND ps.deleted_at IS NULL';
         $sessionParams = ['club_id' => $clubId];
         if ($selectedSeasonId !== null) {
             $sessionSql .= ' AND ps.season_id = :season_id';
@@ -25,7 +25,45 @@ final class ScheduleAdminService
         }
         $sessions = $this->pdo->prepare($sessionSql . ' ORDER BY ps.day_of_week, ps.start_time, se.start_date DESC, ps.name');
         $sessions->execute($sessionParams);
-        return ['terms' => [], 'statuses' => $statuses, 'seasons' => $seasons->fetchAll(), 'sessions' => $sessions->fetchAll(), 'rinks' => $this->rinks($clubId)];
+        $users = $this->pdo->query(
+            'SELECT id, first_name, last_name
+             FROM app_user
+             WHERE active = 1 AND deleted_at IS NULL
+             ORDER BY last_name, first_name, id'
+        )->fetchAll();
+        $groups = $this->pdo->prepare(
+            'SELECT pg.id, pg.program_session_id, pg.name, pg.colour_hex, pg.report_card_coach_user_id,
+                    (
+                        SELECT COUNT(*)
+                        FROM skater_enrollment enrollment
+                        INNER JOIN skater skater
+                           ON skater.id = enrollment.skater_id
+                          AND skater.active = 1
+                          AND skater.deleted_at IS NULL
+                        INNER JOIN group_assignment assignment
+                           ON assignment.id = (
+                               SELECT latest_assignment.id
+                               FROM group_assignment latest_assignment
+                               WHERE latest_assignment.skater_enrollment_id = enrollment.id
+                               ORDER BY latest_assignment.id DESC
+                               LIMIT 1
+                           )
+                        WHERE enrollment.program_session_id = pg.program_session_id
+                          AND enrollment.active = 1
+                          AND enrollment.deleted_at IS NULL
+                          AND assignment.program_group_id = pg.id
+                    ) AS skater_count
+             FROM program_group pg
+             INNER JOIN program_session ps
+                ON ps.id = pg.program_session_id
+               AND ps.club_id = :club_id
+               AND ps.deleted_at IS NULL
+             WHERE pg.active = 1
+               AND pg.deleted_at IS NULL
+             ORDER BY pg.program_session_id, pg.display_order, pg.name'
+        );
+        $groups->execute(['club_id' => $clubId]);
+        return ['terms' => [], 'statuses' => $statuses, 'seasons' => $seasons->fetchAll(), 'sessions' => $sessions->fetchAll(), 'groups' => $groups->fetchAll(), 'rinks' => $this->rinks($clubId), 'users' => $users];
     }
 
     public function saveSeason(int $clubId, int $userId, array $input): void
@@ -56,6 +94,9 @@ final class ScheduleAdminService
         }
         $this->pdo->beginTransaction();
         try {
+            if ($id !== null) {
+                $this->assertCurrentVersion('season', $id, $clubId, $this->version($input['updated_at'] ?? null));
+            }
             $this->pdo->prepare($sql)->execute($values);
             $this->pdo->commit();
         } catch (Throwable $exception) {
@@ -72,6 +113,9 @@ final class ScheduleAdminService
         $sku = $this->text($input['sku'] ?? null, 64, 'SKU');
         $values = ['club_id' => $clubId, 'user_id' => $userId, 'season_id' => $this->id($input['season_id'] ?? null), 'sku' => $sku, 'name' => $this->nullableText($input['name'] ?? null, 160) ?? $sku, 'day_of_week' => $this->id($input['day_of_week'] ?? null), 'start_time' => $this->time($input['start_time'] ?? null), 'end_time' => $this->time($input['end_time'] ?? null), 'location' => $this->nullableText($input['location'] ?? null, 160)];
         if ((int) $values['day_of_week'] > 7 || $values['end_time'] <= $values['start_time']) throw new InvalidArgumentException('Enter a valid session day and time range.');
+        if (!$this->seasonBelongsToClub((int) $values['season_id'], $clubId)) {
+            throw new InvalidArgumentException('Choose a valid season for this club.');
+        }
         if ($id === null) {
             $values['created_by_user_id'] = $userId;
             $values['updated_by_user_id'] = $userId;
@@ -81,11 +125,24 @@ final class ScheduleAdminService
             $values['id'] = $id;
             $sql = 'UPDATE program_session SET sku = :sku, name = :name, day_of_week = :day_of_week, start_time = :start_time, end_time = :end_time, location = :location, updated_by_user_id = :user_id WHERE id = :id AND season_id = :season_id AND club_id = :club_id AND deleted_at IS NULL';
         }
+        $this->pdo->beginTransaction();
         try {
+            if ($id !== null) {
+                $this->assertCurrentVersion('program_session', $id, $clubId, $this->version($input['updated_at'] ?? null), (int) $values['season_id']);
+            }
             $this->pdo->prepare($sql)->execute($values);
+            $this->pdo->commit();
         } catch (PDOException $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
             if ($exception->getCode() === '23000') {
                 throw new InvalidArgumentException('That SKU is already in use.');
+            }
+            throw $exception;
+        } catch (Throwable $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
             }
             throw $exception;
         }
@@ -93,6 +150,76 @@ final class ScheduleAdminService
 
     public function removeSeason(int $clubId, int $userId, $id): void { $this->remove('season', $clubId, $userId, $id, 'id', 'A season with sessions cannot be removed. Remove its sessions first.'); }
     public function removeSession(int $clubId, int $userId, $id): void { $this->remove('program_session', $clubId, $userId, $id, 'id', 'A session with active skater registrations cannot be removed.'); }
+
+    /** @param array<int|string, mixed> $coachUserIds */
+    public function saveGroupCoaches(int $clubId, int $userId, $sessionId, array $coachUserIds): void
+    {
+        $sessionId = $this->id($sessionId);
+        if ($sessionId === null) {
+            throw new InvalidArgumentException('Choose a valid session.');
+        }
+        $session = $this->pdo->prepare('SELECT id FROM program_session WHERE id = :id AND club_id = :club_id AND deleted_at IS NULL');
+        $session->execute(['id' => $sessionId, 'club_id' => $clubId]);
+        $sessionFound = $session->fetchColumn() !== false;
+        $session->closeCursor();
+        if (!$sessionFound) {
+            throw new InvalidArgumentException('That session is not available.');
+        }
+
+        $assignments = [];
+        foreach ($coachUserIds as $groupId => $coachUserId) {
+            $parsedGroupId = $this->id($groupId);
+            if ($parsedGroupId === null) {
+                continue;
+            }
+            $parsedCoachUserId = $this->id($coachUserId);
+            $this->validateReportCardCoach($parsedCoachUserId);
+            $assignments[$parsedGroupId] = $parsedCoachUserId;
+        }
+        if ($assignments === []) {
+            return;
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $group = $this->pdo->prepare(
+                'SELECT id FROM program_group
+                 WHERE id = :id
+                   AND program_session_id = :session_id
+                   AND active = 1
+                   AND deleted_at IS NULL'
+            );
+            $update = $this->pdo->prepare(
+                'UPDATE program_group
+                 SET report_card_coach_user_id = :coach_user_id,
+                     updated_by_user_id = :user_id
+                 WHERE id = :id
+                   AND program_session_id = :session_id
+                   AND active = 1
+                   AND deleted_at IS NULL'
+            );
+            foreach ($assignments as $groupId => $coachUserId) {
+                $group->execute(['id' => $groupId, 'session_id' => $sessionId]);
+                $groupFound = $group->fetchColumn() !== false;
+                $group->closeCursor();
+                if (!$groupFound) {
+                    throw new InvalidArgumentException('One or more colour groups are no longer available. Refresh the page and try again.');
+                }
+                $update->execute([
+                    'coach_user_id' => $coachUserId,
+                    'user_id' => $userId,
+                    'id' => $groupId,
+                    'session_id' => $sessionId,
+                ]);
+            }
+            $this->pdo->commit();
+        } catch (Throwable $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
+        }
+    }
 
     public function rinks(int $clubId): array
     {
@@ -135,8 +262,67 @@ final class ScheduleAdminService
     }
 
     private function saveRinks(int $clubId, int $userId, array $rinks): void { $sql = 'INSERT INTO application_setting (club_id, setting_key, setting_value, value_type, description, created_by_user_id, updated_by_user_id) VALUES (:club_id, :key, :value, "json", :description, :created_by, :updated_by) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by_user_id = VALUES(updated_by_user_id)'; $this->pdo->prepare($sql)->execute(['club_id' => $clubId, 'key' => self::RINKS_KEY, 'value' => json_encode($rinks, JSON_THROW_ON_ERROR), 'description' => 'Administrator-managed rink names.', 'created_by' => $userId, 'updated_by' => $userId]); }
-    private function remove(string $table, int $clubId, int $userId, $id, string $column, string $message): void { $id = $this->id($id); $check = $table === 'season' ? 'SELECT COUNT(*) FROM program_session WHERE season_id = :id AND deleted_at IS NULL' : 'SELECT COUNT(*) FROM skater_enrollment enrollment INNER JOIN skater ON skater.id = enrollment.skater_id WHERE enrollment.program_session_id = :id AND enrollment.deleted_at IS NULL AND skater.deleted_at IS NULL'; $statement = $this->pdo->prepare($check); $statement->execute(['id' => $id]); if ((int) $statement->fetchColumn() > 0) throw new InvalidArgumentException($message); $this->pdo->prepare("UPDATE {$table} SET active = 0, deleted_at = UTC_TIMESTAMP(), updated_by_user_id = :user_id WHERE {$column} = :id AND club_id = :club_id")->execute(['user_id' => $userId, 'id' => $id, 'club_id' => $clubId]); }
+    private function assertCurrentVersion(string $table, int $id, int $clubId, string $expectedVersion, ?int $seasonId = null): void
+    {
+        if (!in_array($table, ['season', 'program_session'], true)) {
+            throw new LogicException('Unsupported schedule record type.');
+        }
+        $sql = "SELECT updated_at FROM {$table} WHERE id = :id AND club_id = :club_id AND deleted_at IS NULL";
+        $params = ['id' => $id, 'club_id' => $clubId];
+        if ($seasonId !== null) {
+            $sql .= ' AND season_id = :season_id';
+            $params['season_id'] = $seasonId;
+        }
+        $statement = $this->pdo->prepare($sql . ' FOR UPDATE');
+        $statement->execute($params);
+        $actualVersion = $statement->fetchColumn();
+        if ($actualVersion === false || !hash_equals($expectedVersion, (string) $actualVersion)) {
+            throw new InvalidArgumentException('This record was changed or removed by another user. Refresh the page and try again.');
+        }
+    }
+    private function validateReportCardCoach(?int $userId): void { if ($userId === null) return; $statement = $this->pdo->prepare('SELECT id FROM app_user WHERE id = :id AND active = 1 AND deleted_at IS NULL'); $statement->execute(['id' => $userId]); $valid = $statement->fetchColumn() !== false; $statement->closeCursor(); if (!$valid) throw new InvalidArgumentException('Choose an active CAT user as the group coach.'); }
+    private function seasonBelongsToClub(int $seasonId, int $clubId): bool { $statement = $this->pdo->prepare('SELECT id FROM season WHERE id = :season_id AND club_id = :club_id AND deleted_at IS NULL'); $statement->execute(['season_id' => $seasonId, 'club_id' => $clubId]); return $statement->fetchColumn() !== false; }
+    private function remove(string $table, int $clubId, int $userId, $id, string $column, string $message): void
+    {
+        $id = $this->id($id);
+        $this->pdo->beginTransaction();
+        try {
+            // Registration changes lock their session before they read or write enrollments.
+            // Locking the target first makes a concurrent removal and registration serialize.
+            $target = $this->pdo->prepare(
+                "SELECT {$column} FROM {$table}
+                 WHERE {$column} = :id AND club_id = :club_id AND deleted_at IS NULL
+                 FOR UPDATE"
+            );
+            $target->execute(['id' => $id, 'club_id' => $clubId]);
+            if ($target->fetchColumn() === false) {
+                throw new InvalidArgumentException('This record could not be found.');
+            }
+
+            $check = $table === 'season'
+                ? 'SELECT COUNT(*) FROM program_session WHERE season_id = :id AND deleted_at IS NULL'
+                : 'SELECT COUNT(*) FROM skater_enrollment enrollment INNER JOIN skater ON skater.id = enrollment.skater_id WHERE enrollment.program_session_id = :id AND enrollment.active = 1 AND enrollment.deleted_at IS NULL AND skater.deleted_at IS NULL';
+            $statement = $this->pdo->prepare($check);
+            $statement->execute(['id' => $id]);
+            if ((int) $statement->fetchColumn() > 0) {
+                throw new InvalidArgumentException($message);
+            }
+
+            $this->pdo->prepare(
+                "UPDATE {$table}
+                 SET active = 0, deleted_at = UTC_TIMESTAMP(), updated_by_user_id = :user_id
+                 WHERE {$column} = :id AND club_id = :club_id AND deleted_at IS NULL"
+            )->execute(['user_id' => $userId, 'id' => $id, 'club_id' => $clubId]);
+            $this->pdo->commit();
+        } catch (Throwable $exception) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $exception;
+        }
+    }
     private function id($value): ?int { if ($value === null || $value === '') return null; $id = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]); if ($id === false) throw new InvalidArgumentException('Choose a valid value.'); return (int) $id; }
+    private function version($value): string { $value = trim((string) $value); if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/D', $value) !== 1) throw new InvalidArgumentException('This record was changed or removed by another user. Refresh the page and try again.'); return $value; }
     private function lookupId(string $table, string $code): int { $statement = $this->pdo->prepare("SELECT id FROM {$table} WHERE code = :code AND active = 1 LIMIT 1"); $statement->execute(['code' => $code]); $id = $statement->fetchColumn(); if ($id === false) throw new RuntimeException('Required season settings are not configured.'); return (int) $id; }
     private function text($value, int $limit, string $label): string { $value = trim((string) $value); if ($value === '' || mb_strlen($value) > $limit) throw new InvalidArgumentException("{$label} is required."); return $value; }
     private function nullableText($value, int $limit): ?string { $value = trim((string) $value); if ($value === '') return null; if (mb_strlen($value) > $limit) throw new InvalidArgumentException('Value is too long.'); return $value; }

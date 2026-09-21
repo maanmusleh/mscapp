@@ -4,12 +4,32 @@ $userInitials = trim(mb_substr(trim((string) ($user['first_name'] ?? '')), 0, 1)
     . mb_substr(trim((string) ($user['last_name'] ?? '')), 0, 1));
 $userInitials = strtoupper($userInitials !== '' ? $userInitials : mb_substr($displayName, 0, 2));
 $days = [1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday', 4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday', 7 => 'Sunday'];
+$sessionRinkNames = array_merge(['No rink'], $scheduleData['rinks'] ?? []);
+$sessionRinkNameLength = max(array_map(static fn (string $rink): int => mb_strlen($rink), $sessionRinkNames));
+$sessionRinkSelectWidth = max(100, 40 + ($sessionRinkNameLength * 8));
 $selectedSeason = null;
 foreach ($scheduleData['seasons'] as $season) {
     if ((int) $season['id'] === (int) ($selectedSeasonId ?? 0)) {
         $selectedSeason = $season;
         break;
     }
+}
+$sessionGroups = [];
+foreach ($scheduleData['groups'] ?? [] as $group) {
+    $sessionGroups[(int) $group['program_session_id']][] = $group;
+}
+$populatedSessionGroups = [];
+$sessionCoachesComplete = [];
+foreach ($sessionGroups as $sessionId => $groups) {
+    $populatedSessionGroups[$sessionId] = array_values(array_filter(
+        $groups,
+        static fn (array $group): bool => (int) ($group['skater_count'] ?? 0) > 0
+    ));
+    $sessionCoachesComplete[$sessionId] = $populatedSessionGroups[$sessionId] !== []
+        && count(array_filter(
+            $populatedSessionGroups[$sessionId],
+            static fn (array $group): bool => (int) ($group['report_card_coach_user_id'] ?? 0) > 0
+        )) === count($populatedSessionGroups[$sessionId]);
 }
 ?>
 <!doctype html>
@@ -63,6 +83,7 @@ foreach ($scheduleData['seasons'] as $season) {
                         <form method="post" action="<?= e(url('sessions/seasons')) ?>" class="schedule-row season-row" data-preserve-scroll>
                             <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
                             <input type="hidden" name="id" value="<?= e($season['id']) ?>">
+                            <input type="hidden" name="updated_at" value="<?= e($season['updated_at']) ?>">
                             <input name="name" value="<?= e($season['name']) ?>" required aria-label="Season name">
                             <input name="start_date" type="date" value="<?= e($season['start_date']) ?>" required aria-label="Start date">
                             <input name="end_date" type="date" value="<?= e($season['end_date']) ?>" required aria-label="End date">
@@ -119,7 +140,7 @@ foreach ($scheduleData['seasons'] as $season) {
                 <div class="card-heading sessions-heading"><p>Choose a season to view and manage its sessions.</p><form method="get" action="<?= e(url()) ?>" class="season-session-filter"><input type="hidden" name="route" value="sessions"><label>Season<select name="season_id" data-season-session-select><option value="">Select a season</option><?php foreach ($scheduleData['seasons'] as $season): ?><option value="<?= e($season['id']) ?>" <?= (int) $season['id'] === (int) ($selectedSeasonId ?? 0) ? 'selected' : '' ?>><?= e($season['name']) ?></option><?php endforeach; ?></select></label></form><p class="session-sku-note">NOTE: Sessions with unmatched SKUs will be automatically created when skaters are imported. The initial session name will be the SKU and can be changed here.</p></div>
             <?php if ($selectedSeason !== null): ?>
             <div class="schedule-admin-grid">
-                <section class="schedule-admin-card">
+                <section class="schedule-admin-card" style="--session-rink-width: <?= e((string) $sessionRinkSelectWidth) ?>px">
                     <div class="session-column-headings" aria-hidden="true">
                         <span>SKU</span>
                         <span>Name</span>
@@ -127,6 +148,7 @@ foreach ($scheduleData['seasons'] as $season) {
                         <span>Start time</span>
                         <span>End time</span>
                         <span>Rink</span>
+                        <span>Coaches</span>
                         <span></span>
                         <span></span>
                     </div>
@@ -135,12 +157,14 @@ foreach ($scheduleData['seasons'] as $season) {
                             <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
                             <input type="hidden" name="id" value="<?= e($session['id']) ?>">
                             <input type="hidden" name="season_id" value="<?= e($selectedSeason['id']) ?>">
+                            <input type="hidden" name="updated_at" value="<?= e($session['updated_at']) ?>">
                             <input name="sku" value="<?= e($session['sku']) ?>" required maxlength="64" aria-label="SKU" placeholder="SKU">
                             <input name="name" value="<?= e($session['name']) ?>" aria-label="Session name" placeholder="Mon 1700-1750">
                             <select name="day_of_week" aria-label="Day of week"><?php foreach ($days as $day => $label): ?><option value="<?= $day ?>" <?= $day === (int) $session['day_of_week'] ? 'selected' : '' ?>><?= e($label) ?></option><?php endforeach; ?></select>
                             <input name="start_time" type="time" value="<?= e(substr($session['start_time'], 0, 5)) ?>" required aria-label="Start time">
                             <input name="end_time" type="time" value="<?= e(substr($session['end_time'], 0, 5)) ?>" required aria-label="End time">
                             <select name="location" aria-label="Rink"><option value="">No rink</option><?php foreach ($scheduleData['rinks'] as $rink): ?><option value="<?= e($rink) ?>" <?= $rink === $session['location'] ? 'selected' : '' ?>><?= e($rink) ?></option><?php endforeach; ?></select>
+                            <button class="button button-secondary" type="button" data-group-coaches-open="group-coaches-<?= e($session['id']) ?>"><?= !empty($sessionCoachesComplete[(int) $session['id']]) ? 'Change Coaches' : 'Assign Coaches' ?></button>
                             <button class="button button-secondary" name="intent" value="save">Save</button>
                             <button class="button button-ghost" name="intent" value="remove">Remove</button>
                         </form>
@@ -154,8 +178,37 @@ foreach ($scheduleData['seasons'] as $season) {
                         <input name="start_time" type="time" required aria-label="Start time">
                         <input name="end_time" type="time" required aria-label="End time">
                         <select name="location" aria-label="Rink"><option value="">No rink</option><?php foreach ($scheduleData['rinks'] as $rink): ?><option value="<?= e($rink) ?>"><?= e($rink) ?></option><?php endforeach; ?></select>
+                        <span class="session-coaches-unavailable">Add session first</span>
                         <button class="button button-primary" name="intent" value="save">Add session</button>
                     </form>
+                    <?php foreach ($scheduleData['sessions'] as $session): ?>
+                        <?php $groupsWithSkaters = $populatedSessionGroups[(int) $session['id']] ?? []; ?>
+                        <dialog class="group-coaches-dialog" id="group-coaches-<?= e($session['id']) ?>" aria-labelledby="group-coaches-title-<?= e($session['id']) ?>">
+                            <form method="post" action="<?= e(url('sessions/group-coaches')) ?>" class="group-coaches-form" data-preserve-scroll>
+                                <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
+                                <input type="hidden" name="session_id" value="<?= e($session['id']) ?>">
+                                <input type="hidden" name="season_id" value="<?= e($selectedSeason['id']) ?>">
+                                <div class="group-coaches-dialog-heading">
+                                    <div><h2 id="group-coaches-title-<?= e($session['id']) ?>">Coaches · <?= e($session['name']) ?></h2><p>Assign a report-card coach to each colour group with skaters.</p></div>
+                                    <button class="dialog-close" type="button" data-group-coaches-close aria-label="Close">×</button>
+                                </div>
+                                <?php if ($groupsWithSkaters === []): ?>
+                                    <p class="group-coaches-empty">No colour groups in this session currently have skaters assigned.</p>
+                                <?php else: ?>
+                                    <div class="group-coaches-list">
+                                        <?php foreach ($groupsWithSkaters as $group): ?>
+                                            <?php $skaterCount = (int) $group['skater_count']; ?>
+                                            <label class="group-coaches-row">
+                                                <span class="group-coaches-colour"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="<?= e($group['colour_hex'] ?: '#64748b') ?>" stroke="#5f6e80" stroke-width="1.5"></circle></svg><span><strong><?= e($group['name']) ?></strong><small><?= e($skaterCount . ' ' . ($skaterCount === 1 ? 'skater' : 'skaters')) ?></small></span></span>
+                                                <select name="coach_user_id[<?= e($group['id']) ?>]" aria-label="Coach for <?= e($group['name']) ?>"><option value="">No coach assigned</option><?php foreach ($scheduleData['users'] as $coach): ?><option value="<?= e($coach['id']) ?>" <?= (int) ($group['report_card_coach_user_id'] ?? 0) === (int) $coach['id'] ? 'selected' : '' ?>><?= e(trim((string) $coach['first_name'] . ' ' . (string) $coach['last_name'])) ?></option><?php endforeach; ?></select>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endif; ?>
+                                <div class="group-coaches-actions"><button class="button button-secondary" type="button" data-group-coaches-close>Cancel</button><button class="button button-primary" type="submit" <?= $groupsWithSkaters === [] ? 'disabled' : '' ?>>Save coaches</button></div>
+                            </form>
+                        </dialog>
+                    <?php endforeach; ?>
                 </section>
             </div>
             <?php else: ?>

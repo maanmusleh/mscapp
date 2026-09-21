@@ -11,6 +11,7 @@ $GLOBALS['cat_config'] = require dirname(__DIR__) . '/config/app.php';
 
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/Database.php';
+require_once __DIR__ . '/SchemaHealthService.php';
 require_once __DIR__ . '/Auth.php';
 require_once __DIR__ . '/TotpService.php';
 require_once __DIR__ . '/LoginActivityService.php';
@@ -18,6 +19,7 @@ require_once __DIR__ . '/CanSkateRequirements.php';
 require_once __DIR__ . '/DashboardRepository.php';
 require_once __DIR__ . '/SkaterService.php';
 require_once __DIR__ . '/RinkService.php';
+require_once __DIR__ . '/RinkOfflineService.php';
 require_once __DIR__ . '/LegacyAchievementImportService.php';
 require_once __DIR__ . '/UserService.php';
 require_once __DIR__ . '/AdminToolsService.php';
@@ -62,7 +64,7 @@ if (PHP_SAPI !== 'cli' && session_status() !== PHP_SESSION_ACTIVE) {
         header('Strict-Transport-Security: ' . $hsts);
     }
 
-    $idleLifetime = max(300, (int) config('session.lifetime_seconds', 5400));
+    $idleLifetime = max(300, (int) config('session.lifetime_seconds', 7200));
     $absoluteLifetime = max($idleLifetime, (int) config('session.absolute_lifetime_seconds', 43200));
     session_name((string) config('session.name', 'cat_session'));
     ini_set('session.gc_maxlifetime', (string) $idleLifetime);

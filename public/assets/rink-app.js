@@ -1,6 +1,8 @@
-(() => {
+(async () => {
     'use strict';
 
+    // Render the server-provided tab immediately. Offline hydration refreshes
+    // it in the background through the rink-offline-data event below.
     const body = document.body;
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
     const seasonId = Number(body.dataset.seasonId || 0);
@@ -8,7 +10,7 @@
     const currentActivity = body.dataset.rinkActivity || 'roster';
     const stateScope = body.dataset.rinkStateScope || 'session';
     const canEditRink = body.dataset.rinkCanEdit === 'true';
-    let groupId = Number(body.dataset.groupId || 0);
+    let groupId = Number(new URLSearchParams(location.search).get('group_id') ?? body.dataset.groupId ?? 0);
     const apiBase = body.dataset.rinkApiBase || '';
     const connectionStatus = document.querySelector('[data-rink-connection-status]');
     const connectionLabel = connectionStatus?.querySelector('[data-rink-connection-label]');
@@ -93,6 +95,7 @@
         if (!canEditRink && !['GET', 'HEAD'].includes(method)) {
             throw new Error('This account has read-only access.');
         }
+        if (window.CATRinkOffline) return window.CATRinkOffline.request(url, options);
         const response = await fetch(url, {
             headers: {Accept: 'application/json', ...(options.headers || {})},
             cache: 'no-store',
@@ -111,6 +114,7 @@
     };
     let rinkConnected = true;
     const setConnectionStatus = (connected) => {
+        if (window.CATRinkOffline) connected = window.CATRinkOffline.connected;
         rinkConnected = connected;
         if (connectionStatus && connectionLabel) {
             connectionStatus.classList.toggle('is-connected', connected);
@@ -123,10 +127,20 @@
         if (chatPostStatus) chatPostStatus.hidden = connected;
     };
     const checkConnection = async () => {
+        if (window.CATRinkOffline?.available) { setConnectionStatus(window.CATRinkOffline.connected); return; }
         if (!body.dataset.rinkStatusUrl || document.hidden) return;
         try {
-            const status = await request(body.dataset.rinkStatusUrl);
+            const statusUrl = !isChatView && seasonId && sessionId
+                ? withQuery(body.dataset.rinkStatusUrl, {
+                    season_id: String(seasonId),
+                    session_id: String(sessionId),
+                })
+                : body.dataset.rinkStatusUrl;
+            const status = await request(statusUrl);
             setConnectionStatus(status.connected === true);
+            if (!isChatView && Object.prototype.hasOwnProperty.call(status, 'unread_count')) {
+                updateChatUnread(Number(status.unread_count || 0));
+            }
         } catch (error) {
             setConnectionStatus(false);
         }
@@ -151,12 +165,12 @@
     };
     toastClose?.addEventListener('click', () => { toast.hidden = true; });
 
-    const navigator = document.querySelector('[data-rink-navigator]');
-    navigator?.querySelector('[data-rink-season]')?.addEventListener('change', (event) => {
-        navigator?.querySelector('[data-rink-session]')?.removeAttribute('name');
+    const rinkNavigator = document.querySelector('[data-rink-navigator]');
+    rinkNavigator?.querySelector('[data-rink-season]')?.addEventListener('change', (event) => {
+        rinkNavigator?.querySelector('[data-rink-session]')?.removeAttribute('name');
         event.currentTarget.form?.submit();
     });
-    navigator?.querySelector('[data-rink-session]')?.addEventListener('change', (event) => event.currentTarget.form?.submit());
+    rinkNavigator?.querySelector('[data-rink-session]')?.addEventListener('change', (event) => event.currentTarget.form?.submit());
     const rosterBody = document.querySelector('[data-rink-roster-body]');
     const noResults = document.querySelector('[data-rink-no-results]');
     const reportCardsToolbar = document.querySelector('.rink-report-cards-toolbar');
@@ -270,12 +284,12 @@
         .replace(/[\u2013\u2014]/g, '-')
         .replace(/\u2026/g, '...')
         .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, '?');
-    const reportCardNote = (skater) => {
+    const reportCardNote = (skater, coach) => {
         const replacements = {
             '{skater first name}': skater.first_name || '',
             '{skater last name}': skater.last_name || '',
-            '{coach first name}': body.dataset.currentUserFirstName || '',
-            '{coach last name}': body.dataset.currentUserLastName || '',
+            '{coach first name}': coach.firstName || '',
+            '{coach last name}': coach.lastName || '',
         };
         return Object.entries(replacements).reduce(
             (note, [token, replacement]) => note.replaceAll(token, replacement),
@@ -291,7 +305,7 @@
         if (!firstField || suffix === undefined) return '';
         return `${String(firstField + skillIndex).padStart(2, '0')}${suffix}`;
     };
-    const fillReportCard = async (templateBytes, signatureBytes, generatedOn, skater, curriculum) => {
+    const fillReportCard = async (templateBytes, signatureBytes, coach, generatedOn, skater, curriculum) => {
         const {PDFDocument, PDFName, StandardFonts} = window.PDFLib;
         const document = await PDFDocument.load(templateBytes, {ignoreEncryption: true});
         const form = document.getForm();
@@ -376,9 +390,31 @@
             });
         };
         const drawSignature = async () => {
-            if (!signatureBytes) return;
-            const signature = await document.embedPng(signatureBytes);
             const rectangle = fieldRectangle('CoachSIG');
+            const coachName = reportCardText(`${coach.firstName || ''} ${coach.lastName || ''}`).trim();
+            if (signatureBytes && coachName !== '') {
+                pages[1].drawText(`Coach: ${coachName}`, {
+                    x: rectangle.x + 4,
+                    y: rectangle.y + 42,
+                    size: 8,
+                    font,
+                    maxWidth: rectangle.width - 8,
+                });
+            }
+            if (!signatureBytes) {
+                if (coachName !== '') {
+                    const dateRectangle = fieldRectangle('CoachDate');
+                    pages[1].drawText(`Coach: ${coachName}`, {
+                        x: rectangle.x + 4,
+                        y: dateRectangle.y + Math.max(1.5, (dateRectangle.height - 9) / 2),
+                        size: 9,
+                        font,
+                        maxWidth: rectangle.width - 8,
+                    });
+                }
+                return;
+            }
+            const signature = await document.embedPng(signatureBytes);
             const maximumWidth = rectangle.width - 8;
             const maximumHeight = 40;
             const scale = Math.min(maximumWidth / signature.width, maximumHeight / signature.height);
@@ -396,7 +432,7 @@
 
         drawTextField('Name', `${skater.first_name || ''} ${skater.last_name || ''}`.trim(), 0, 11);
         drawTextField('Club', body.dataset.clubName || '', 0, 11);
-        drawComments(reportCardNote(skater));
+        drawComments(reportCardNote(skater, coach));
         drawTextField('CoachDate', generatedOn, 1, 9);
         await drawSignature();
 
@@ -443,28 +479,39 @@
         const originalLabel = label?.textContent || 'Generate';
         if (label) label.textContent = 'Generating...';
         try {
-            const [templateResponse, signatureResponse] = await Promise.all([
-                fetch(body.dataset.rinkReportCardTemplateUrl || '', {
-                    headers: {Accept: 'application/pdf'},
-                    cache: 'no-store',
-                }),
-                fetch(body.dataset.rinkReportCardSignatureUrl || '', {
+            const coachUrl = new URL(body.dataset.rinkReportCardCoachUrl || '', window.location.href);
+            coachUrl.searchParams.set('season_id', String(seasonId));
+            coachUrl.searchParams.set('session_id', String(sessionId));
+            const templateResponse = await fetch(body.dataset.rinkReportCardTemplateUrl || '', {
+                headers: {Accept: 'application/pdf'},
+                cache: 'no-store',
+            });
+            if (!templateResponse.ok) throw new Error('The report-card template could not be loaded.');
+            const decodeCoachHeader = (value) => {
+                try { return value ? decodeURIComponent(value) : ''; } catch (error) { return ''; }
+            };
+            const coachForSkater = async (skater) => {
+                const skaterCoachUrl = new URL(coachUrl);
+                skaterCoachUrl.searchParams.set('skater_public_id', String(skater.public_id));
+                const response = await fetch(skaterCoachUrl, {
                     headers: {Accept: 'image/png'},
                     cache: 'no-store',
-                }),
-            ]);
-            if (!templateResponse.ok) throw new Error('The report-card template could not be loaded.');
-            if (!signatureResponse.ok && signatureResponse.status !== 204) {
-                throw new Error('Your report-card signature could not be loaded.');
-            }
-            const [templateBytes, signatureBytes] = await Promise.all([
-                templateResponse.arrayBuffer(),
-                signatureResponse.status === 204 ? Promise.resolve(null) : signatureResponse.arrayBuffer(),
-            ]);
+                });
+                if (!response.ok && response.status !== 204) {
+                    throw new Error('The assigned colour-group coach could not be loaded.');
+                }
+                return {
+                    firstName: decodeCoachHeader(response.headers.get('X-CAT-Report-Card-Coach-First-Name')),
+                    lastName: decodeCoachHeader(response.headers.get('X-CAT-Report-Card-Coach-Last-Name')),
+                    signature: response.status === 204 ? null : await response.arrayBuffer(),
+                };
+            };
+            const templateBytes = await templateResponse.arrayBuffer();
             const output = await window.PDFLib.PDFDocument.create();
             const generatedOn = reportCardGenerationDate();
             for (const skater of skaters) {
-                const card = await fillReportCard(templateBytes, signatureBytes, generatedOn, skater, assessData.stages || []);
+                const coach = await coachForSkater(skater);
+                const card = await fillReportCard(templateBytes, coach.signature, coach, generatedOn, skater, assessData.stages || []);
                 const pages = await output.copyPages(card, card.getPageIndices());
                 pages.forEach((page) => output.addPage(page));
             }
@@ -590,6 +637,7 @@
         : {key: 'first_name', direction: 'asc'};
     let isMutating = false;
     let rosterRefreshVersion = 0;
+    let rosterRefreshInFlight = false;
     let assessData = null;
     let assessActiveSort = ['group', 'name', 'notes'].includes(restoredViewState?.sort?.key)
         && ['asc', 'desc'].includes(restoredViewState?.sort?.direction)
@@ -651,6 +699,11 @@
         const initialChat = document.querySelector('#rink-chat-data')?.textContent || '';
         chatData = initialChat ? JSON.parse(initialChat) : null;
     } catch { chatData = null; }
+    if (window.CATRinkOffline?.available) {
+        const params = {season_id: String(seasonId), session_id: String(sessionId), group_id: String(groupId || '')};
+        rosterData = window.CATRinkOffline.get(withQuery(body.dataset.rinkRosterUrl, params));
+        assessData = window.CATRinkOffline.get(withQuery(body.dataset.rinkAssessUrl, params));
+    }
 
     const rowValue = (skater, key) => {
         if (key === 'group') return skater.group_name || '';
@@ -715,10 +768,14 @@
             const attendanceTitle = rosterData.attendance.enabled
                 ? (skater.attendance_recorded ? (skater.attendance_status || 'Recorded') : 'Attendance not yet recorded')
                 : (rosterData.attendance.message || 'Attendance unavailable');
+            const attendancePendingSync = Boolean(skater.attendance_pending_sync);
+            const attendanceStatusTitle = attendancePendingSync
+                ? `${attendanceTitle}. Saved on this device; syncs automatically when connected.`
+                : attendanceTitle;
             const nameCells = `<td class="rink-name-cell"><button class="rink-name-button rink-roster-name-tag" type="button" data-profile-skater="${escapeHtml(skater.public_id)}" data-rink-name-tag-colour="${escapeHtml(skater.group_colour || '')}"><strong>${escapeHtml(skater.first_name)}</strong></button></td><td class="rink-name-cell"><span class="rink-last-name">${escapeHtml(skater.last_name)}</span></td>`;
             const rosterCells = isAssessView
                 ? `${nameCells}<td class="rink-medical-cell">${generalNoteButton(skater, name)}${medicalButton(skater, name)}</td>`
-                : `${nameCells}<td class="rink-gender-cell">${escapeHtml(skater.gender_name || '—')}</td><td class="rink-age-cell">${escapeHtml(skater.age ?? '—')}</td><td class="rink-attendance-cell ${skater.attendance_recorded ? 'is-recorded' : ''}" title="${escapeHtml(attendanceTitle)}"><input type="checkbox" data-rink-attendance data-skater-id="${escapeHtml(skater.public_id)}" aria-label="Mark ${escapeHtml(name)} present" ${skater.present ? 'checked' : ''} ${rosterData.attendance.enabled && canEditRink ? '' : 'disabled'}></td><td class="rink-medical-cell">${generalNoteButton(skater, name)}${medicalButton(skater, name)}</td>`;
+                : `${nameCells}<td class="rink-gender-cell">${escapeHtml(skater.gender_name || '—')}</td><td class="rink-age-cell">${escapeHtml(skater.age ?? '—')}</td><td class="rink-attendance-cell ${skater.attendance_recorded ? 'is-recorded' : ''} ${attendancePendingSync ? 'is-pending-sync' : ''}" title="${escapeHtml(attendanceStatusTitle)}"><input type="checkbox" data-rink-attendance data-skater-id="${escapeHtml(skater.public_id)}" aria-label="Mark ${escapeHtml(name)} present" ${skater.present ? 'checked' : ''} ${rosterData.attendance.enabled && canEditRink ? '' : 'disabled'}></td><td class="rink-medical-cell">${generalNoteButton(skater, name)}${medicalButton(skater, name)}</td>`;
             return `<tr data-rink-row data-skater-id="${escapeHtml(skater.public_id)}"><td class="rink-skater-cell">${groupDot(skater)}</td>${rosterCells}</tr>`;
         }).join('');
         rosterBody.querySelectorAll('[data-rink-name-tag-colour]').forEach((tag) => {
@@ -949,13 +1006,14 @@
                         const achievementDate = skater.skills?.[skill.id] || '';
                         const achieved = Boolean(achievementDate);
                         const locked = achieved && achievementDate !== localCalendarDate();
+                        const pendingSync = Boolean(skater.pending_sync?.skills?.[skill.id]);
                         const skillName = skill.name || skill.description || 'skill';
                         const actionLabel = locked
                             ? `${skillName} for ${name} was recorded on ${achievementDate} and cannot be removed here.`
                             : (achieved ? 'Remove' : 'Add') + ` ${skillName} for ${name}`;
-                        return `<td class="rink-assess-skill-cell ribbon-${escapeHtml(skill.category)} ${skill.is_participation ? 'is-participation' : ''} ${achieved ? 'is-achieved' : ''} ${locked ? 'is-locked' : ''}">
+                        return `<td class="rink-assess-skill-cell ribbon-${escapeHtml(skill.category)} ${skill.is_participation ? 'is-participation' : ''} ${achieved ? 'is-achieved' : ''} ${locked ? 'is-locked' : ''} ${pendingSync ? 'is-pending-sync' : ''}">
                             <label class="rink-assess-skill-toggle">
-                                <input type="checkbox" data-rink-assess-skill data-skater-id="${escapeHtml(skater.public_id)}" data-skill-id="${escapeHtml(skill.id)}" data-achievement-date="${escapeHtml(achievementDate)}" aria-label="${escapeHtml(actionLabel)}" title="${escapeHtml(locked ? 'Recorded on an earlier day — cannot remove in Coach App.' : '')}" ${achieved ? 'checked' : ''} ${assessMutating || !canEditRink ? 'disabled' : ''}>
+                                <input type="checkbox" data-rink-assess-skill data-skater-id="${escapeHtml(skater.public_id)}" data-skill-id="${escapeHtml(skill.id)}" data-achievement-date="${escapeHtml(achievementDate)}" aria-label="${escapeHtml(actionLabel)}" title="${escapeHtml(locked ? 'Recorded on an earlier day — cannot remove in Coach App.' : (pendingSync ? 'Saved on this device; syncs automatically when connected.' : ''))}" ${achieved ? 'checked' : ''} ${assessMutating || !canEditRink ? 'disabled' : ''}>
                             </label>
                         </td>`;
                     }).join('') : ''}
@@ -1054,7 +1112,7 @@
             const skillId = Number(input.dataset.skillId || 0);
             const achievementDate = String(input.dataset.achievementDate || '');
             const removing = achievementDate !== '' && !input.checked;
-            if (removing && achievementDate !== localCalendarDate()) {
+            if (removing && achievementDate !== localCalendarDate() && !window.CATRinkOffline?.canUndo(skaterId, 'skills', Number(skillId))) {
                 input.checked = true;
                 showToast(assessRemovalMessage, true, true);
                 return;
@@ -1067,7 +1125,7 @@
                     headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrf},
                     body: contextBody(),
                 });
-                showToast(removing ? 'Skill removed.' : 'Skill added.');
+                showToast(removing ? 'Skill change saved.' : 'Skill saved.');
                 await refreshAssess();
             } catch (error) {
                 input.checked = !input.checked;
@@ -1113,14 +1171,23 @@
         return withQuery(body.dataset.rinkRosterUrl || '', parameters);
     };
     const refreshRoster = async () => {
-        if (!rosterBody || isMutating || document.hidden || document.querySelector('dialog[open]')) return;
-        const refreshVersion = ++rosterRefreshVersion;
+        if (!rosterBody || rosterRefreshInFlight || isMutating || document.hidden || document.querySelector('dialog[open]')) return;
+        const refreshVersion = rosterRefreshVersion;
+        rosterRefreshInFlight = true;
         try {
             const refreshedRoster = await request(rosterEndpoint());
             if (refreshVersion !== rosterRefreshVersion || isMutating) return;
+            if (Object.prototype.hasOwnProperty.call(refreshedRoster, 'unread_count')) {
+                updateChatUnread(Number(refreshedRoster.unread_count || 0));
+            }
             rosterData = refreshedRoster;
             renderRoster();
-        } catch {}
+            setConnectionStatus(true);
+        } catch {
+            setConnectionStatus(false);
+        } finally {
+            rosterRefreshInFlight = false;
+        }
     };
 
     const groupFilterSelector = document.querySelector('[data-rink-group-selector]');
@@ -1270,8 +1337,10 @@
             if (update?.group_id) ensureGroupFilterOption(update);
             const nextGroupId = Number(update?.group_id || 0) || null;
             if (update && activeGroupId !== nextGroupId) {
-                adjustGroupFilterCount(activeGroupId, -1);
-                adjustGroupFilterCount(nextGroupId, 1);
+                if (!window.CATRinkOffline?.available) {
+                    adjustGroupFilterCount(activeGroupId, -1);
+                    adjustGroupFilterCount(nextGroupId, 1);
+                }
                 activeGroupId = nextGroupId;
             }
             if (createFromPalette && update?.group_id) choice.dataset.groupId = String(update.group_id);
@@ -1360,7 +1429,7 @@
             ribbon.is_participation_ribbon ? skill.is_participation : !skill.is_participation
         ) && skill.achieved).length;
         const ribbonRequiredCount = (ribbon) => Math.min(ribbonSkillCount(ribbon), Number(ribbon.required_count || ribbonSkillCount(ribbon)));
-        const stageBadge = stage.has_badge ? `<label class="achievement-editor-modal-award-toggle achievement-editor-modal-stage-award"><input type="checkbox" data-rink-achievement-type="badges" data-rink-achievement-id="${escapeHtml(stage.id)}" ${stage.badge_awarded_at ? 'checked' : ''} ${!canEditRink || achievementMutating || (!stage.badge_awarded_at && !eligible) ? 'disabled' : ''}><span>Stage badge awarded</span></label><span class="stage-badge-button stage-award-control stage-badge-stage-${escapeHtml(stage.number)} ${eligible ? 'is-eligible' : ''} ${stage.badge_awarded_at ? 'is-awarded' : ''}">${badgeIcon(stage)}<small>${awardedRibbonCount}/${requiredRibbonCount}</small></span>` : '';
+        const stageBadge = stage.has_badge ? `<label class="achievement-editor-modal-award-toggle achievement-editor-modal-stage-award ${stage.pending_sync ? 'is-pending-sync' : ''}"><input type="checkbox" data-rink-achievement-type="badges" data-rink-achievement-id="${escapeHtml(stage.id)}" title="${stage.pending_sync ? 'Saved on this device; syncs automatically when connected.' : ''}" ${stage.badge_awarded_at ? 'checked' : ''} ${!canEditRink || achievementMutating || (!stage.badge_awarded_at && !eligible) ? 'disabled' : ''}><span>Stage badge awarded</span></label><span class="stage-badge-button stage-award-control stage-badge-stage-${escapeHtml(stage.number)} ${eligible ? 'is-eligible' : ''} ${stage.badge_awarded_at ? 'is-awarded' : ''}">${badgeIcon(stage)}<small>${awardedRibbonCount}/${requiredRibbonCount}</small></span>` : '';
         const ribbonStatus = ribbons.map((ribbon) => {
             const achieved = ribbonAchievedCount(ribbon);
             const required = ribbonRequiredCount(ribbon);
@@ -1375,7 +1444,7 @@
             const required = ribbonRequiredCount(ribbon);
             const total = ribbonSkillCount(ribbon);
             const ribbonEligible = required > 0 && achieved >= required;
-            return `<section class="achievement-editor-modal-ribbon"><div class="achievement-editor-modal-ribbon-head"><h3>${escapeHtml(ribbon.name)} <small>${required}/${total} required</small></h3><label class="achievement-editor-modal-award-toggle"><input type="checkbox" data-rink-achievement-type="ribbons" data-rink-achievement-id="${escapeHtml(ribbon.id)}" ${ribbon.awarded_at ? 'checked' : ''} ${!canEditRink || achievementMutating || (!ribbon.awarded_at && !ribbonEligible) ? 'disabled' : ''}><span>Ribbon awarded</span></label></div><div class="achievement-editor-modal-skills">${skills.map((skill) => `<label class="achievement-editor-modal-skill ${skill.is_participation ? 'is-participation' : ''} ${skill.achieved ? 'is-achieved' : ''}"><input type="checkbox" data-rink-achievement-type="skills" data-rink-achievement-id="${escapeHtml(skill.id)}" ${skill.achieved ? 'checked' : ''} ${!canEditRink || achievementMutating ? 'disabled' : ''}><span>${escapeHtml(skill.name || skill.description || 'Unnamed skill')}</span></label>`).join('')}</div></section>`;
+            return `<section class="achievement-editor-modal-ribbon"><div class="achievement-editor-modal-ribbon-head"><h3>${escapeHtml(ribbon.name)} <small>${required}/${total} required</small></h3><label class="achievement-editor-modal-award-toggle ${ribbon.pending_sync ? 'is-pending-sync' : ''}"><input type="checkbox" data-rink-achievement-type="ribbons" data-rink-achievement-id="${escapeHtml(ribbon.id)}" title="${ribbon.pending_sync ? 'Saved on this device; syncs automatically when connected.' : ''}" ${ribbon.awarded_at ? 'checked' : ''} ${!canEditRink || achievementMutating || (!ribbon.awarded_at && !ribbonEligible) ? 'disabled' : ''}><span>Ribbon awarded</span></label></div><div class="achievement-editor-modal-skills">${skills.map((skill) => `<label class="achievement-editor-modal-skill ${skill.is_participation ? 'is-participation' : ''} ${skill.achieved ? 'is-achieved' : ''} ${skill.pending_sync ? 'is-pending-sync' : ''}"><input type="checkbox" data-rink-achievement-type="skills" data-rink-achievement-id="${escapeHtml(skill.id)}" title="${skill.pending_sync ? 'Saved on this device; syncs automatically when connected.' : ''}" ${skill.achieved ? 'checked' : ''} ${!canEditRink || achievementMutating ? 'disabled' : ''}><span>${escapeHtml(skill.name || skill.description || 'Unnamed skill')}</span></label>`).join('')}</div></section>`;
         }).join('');
         return `<section class="rink-achievement-stage achievement-editor-modal-stage stage-colour-${escapeHtml(stage.number)} ${expanded ? 'is-expanded' : ''}"><div class="rink-achievement-stage-summary"><button class="rink-achievement-expand" type="button" data-rink-achievement-stage="${escapeHtml(stage.id)}" aria-expanded="${expanded ? 'true' : 'false'}" aria-label="${expanded ? 'Collapse' : 'Expand'} ${escapeHtml(stageLabel)}"><span>${expanded ? '−' : '+'}</span></button><button class="rink-achievement-stage-name" type="button" data-rink-achievement-stage="${escapeHtml(stage.id)}"><strong>${escapeHtml(stageLabel)}</strong><small>${awardedRibbonCount}/${requiredRibbonCount} ribbons awarded</small></button>${stageBadge}<span class="rink-detail-ribbons">${ribbonStatus}</span></div>${expanded ? `<div class="rink-achievement-stage-editor">${editor}</div>` : ''}</section>`;
     }).join('')}</div>`;
@@ -1383,7 +1452,7 @@
     const renderProfile = () => {
         if (!profileContent || !activeProfileData) return;
         const skater = activeProfileData.skater;
-        const achievements = `<div class="rink-detail-achievements"><span class="eyebrow">Achievements</span><h2>${profileAchievementOnly ? `${escapeHtml(skater.first_name)} ${escapeHtml(skater.last_name)} — Achievements` : 'Badges &amp; ribbons'}</h2><p class="rink-achievement-help">Open a stage to update its skills and awards. Changes save immediately.</p><p class="form-message error rink-achievement-message" data-rink-achievement-message hidden></p>${achievementSummary(activeProfileData.achievement_editor || [])}</div>`;
+        const achievements = `<div class="rink-detail-achievements"><span class="eyebrow">Achievements</span><h2>${profileAchievementOnly ? `${escapeHtml(skater.first_name)} ${escapeHtml(skater.last_name)} — Achievements` : 'Badges &amp; ribbons'}</h2><p class="rink-achievement-help">Open a stage to update its skills and awards. Changes save on this device and sync automatically when connected.</p><p class="form-message error rink-achievement-message" data-rink-achievement-message hidden></p>${achievementSummary(activeProfileData.achievement_editor || [])}</div>`;
         const details = `<span class="eyebrow">Skater details</span><h2>${escapeHtml(skater.first_name)} ${escapeHtml(skater.last_name)}</h2><div class="rink-profile-grid">${profileItem('Skate Canada no.', skater.skate_canada_number)}${profileItem('Date of birth', formatDate(skater.date_of_birth))}${profileItem('Gender', skater.gender_name)}${profileItem('Guardian', skater.parent_guardian_name)}${profileItem('Email', skater.parent_guardian_email, true)}${profileItem('Phone', skater.parent_guardian_phone, true)}</div>`;
         const assessDetails = `<span class="eyebrow">Skater details</span><h2>${escapeHtml(skater.first_name)} ${escapeHtml(skater.last_name)}</h2><div class="rink-profile-grid">${profileItem('Skate Canada no.', skater.skate_canada_number)}</div>`;
         const generalNotes = `<section class="rink-profile-general-notes"><span class="eyebrow">General notes</span><p>${escapeHtml(skater.general_notes || 'No general notes.')}</p></section>`;
@@ -1442,7 +1511,7 @@
             showAchievementMessage('This achievement could not be identified. Refresh the page and try again.');
             return;
         }
-        if (removing && !current.removableToday) {
+        if (removing && !current.removableToday && !window.CATRinkOffline?.canUndo(activeProfileId, type, id)) {
             input.checked = true;
             showAchievementMessage(priorAchievementRemovalMessage);
             return;
@@ -1467,7 +1536,7 @@
                     // The saved achievement remains visible in the dialog if the roster refresh is temporarily unavailable.
                 }
             }
-            showToast(removing ? 'Achievement removed.' : 'Achievement added.');
+            showToast(removing ? 'Achievement change saved.' : 'Achievement saved.');
             renderProfile();
         } catch (error) {
             input.checked = current.active;
@@ -1901,25 +1970,62 @@
     };
     const updateChatUnread = (count) => {
         if (!chatUnreadBadge) return;
-        chatUnreadBadge.textContent = String(count);
-        chatUnreadBadge.hidden = !count;
+        const unreadCount = Math.max(0, Math.trunc(Number(count) || 0));
+        const previousCount = Math.max(0, Number(chatUnreadBadge.dataset.unreadCount) || 0);
+        chatUnreadBadge.dataset.unreadCount = String(unreadCount);
+        chatUnreadBadge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
+        chatUnreadBadge.setAttribute('aria-label', `${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`);
+        chatUnreadBadge.hidden = unreadCount === 0;
+        if (unreadCount > previousCount) {
+            chatUnreadBadge.classList.remove('is-alerting');
+            void chatUnreadBadge.offsetWidth;
+            chatUnreadBadge.classList.add('is-alerting');
+        }
+    };
+    chatUnreadBadge?.addEventListener('animationend', () => chatUnreadBadge.classList.remove('is-alerting'));
+    const pendingChatReadKey = `rink-chat-read-pending:${currentUserId}:${seasonId}:${sessionId}`;
+    const hasPendingChatRead = () => {
+        try { return window.localStorage.getItem(pendingChatReadKey) === '1'; } catch { return false; }
+    };
+    const markChatSeenLocally = () => {
+        updateChatUnread(0);
+        try { window.localStorage.setItem(pendingChatReadKey, '1'); } catch { /* the local badge still reflects the read state */ }
+    };
+    const clearPendingChatRead = () => {
+        try { window.localStorage.removeItem(pendingChatReadKey); } catch { /* storage is optional */ }
+    };
+    const syncPendingChatRead = async () => {
+        if (!hasPendingChatRead() || !sessionId || document.hidden || !navigator.onLine) return;
+        try {
+            await request(chatEndpoint());
+            clearPendingChatRead();
+            updateChatUnread(0);
+        } catch {
+            // The next reconnection or periodic check will retry this read receipt.
+        }
+    };
+    const refreshChatUnread = async () => {
+        if (isChatView || hasPendingChatRead() || !sessionId || document.hidden || !body.dataset.rinkChatStatusUrl) return;
+        try {
+            const status = await request(withQuery(body.dataset.rinkChatStatusUrl, {
+                season_id: String(seasonId),
+                session_id: String(sessionId),
+            }));
+            if (Object.prototype.hasOwnProperty.call(status, 'unread_count')) {
+                updateChatUnread(Number(status.unread_count || 0));
+            }
+            setConnectionStatus(true);
+        } catch {
+            // Keep the displayed count while the connection is unavailable.
+        }
     };
     const refreshChat = async () => {
         if (!isChatView || document.hidden) return;
-        try { chatData = await request(chatEndpoint()); renderChat(); updateChatUnread(0); } catch { /* retain the current history */ }
-    };
-    const refreshChatUnread = async () => {
-        if (isChatView || document.hidden || !sessionId) return;
-        try {
-            const statusUrl = withQuery(
-                body.dataset.rinkChatStatusUrl || '',
-                {season_id: String(seasonId), session_id: String(sessionId)}
-            );
-            const status = await request(statusUrl);
-            updateChatUnread(Number(status.unread_count || 0));
-        } catch { /* a temporary polling failure should not disturb the app */ }
+        try { chatData = await request(chatEndpoint()); renderChat(); clearPendingChatRead(); updateChatUnread(0); } catch { /* retain the current history */ }
     };
     if (isChatView) {
+        markChatSeenLocally();
+        void syncPendingChatRead();
         if (chatData) renderChat(true);
         const resizeChatInput = () => {
             if (!chatInput) return;
@@ -1964,11 +2070,11 @@
             }
             if (expiry) {
                 const message = (chatData?.messages || []).find((item) => item.public_id === expiry.dataset.rinkChatExpiry);
-                const postedAt = new Date(`${String(message?.created_at || '').replace(' ', 'T')}Z`);
-                if (!message || Number.isNaN(postedAt.getTime()) || !chatExpiryDialog || !chatExpiryInput) return;
+                const scheduledExpiry = new Date(`${String(message?.expires_at || '').replace(' ', 'T')}Z`);
+                if (!message || Number.isNaN(scheduledExpiry.getTime()) || !chatExpiryDialog || !chatExpiryInput) return;
                 chatExpiryDialog.dataset.messageId = message.public_id;
                 chatExpiryInput.min = toDateTimeLocal(new Date());
-                chatExpiryInput.value = toDateTimeLocal(new Date(postedAt.getTime() + (24 * 60 * 60 * 1000)));
+                chatExpiryInput.value = toDateTimeLocal(scheduledExpiry);
                 chatExpiryDialog.showModal();
                 chatExpiryInput.focus();
                 return;
@@ -2030,9 +2136,63 @@
 
     renderRoster();
     restoreViewScroll();
-    setConnectionStatus(navigator.onLine);
+    setConnectionStatus(window.navigator.onLine);
     checkConnection();
-    if (connectionStatus) window.setInterval(checkConnection, 3000);
+    const refreshOfflineView = () => {
+        if (!window.CATRinkOffline?.available) return;
+        const allSkaters = window.CATRinkOffline.snapshot.roster.skaters;
+        if (groupFilterSelector) {
+            groupFilterSelector.dataset.allGroupCount = String(allSkaters.length);
+            for (const skater of allSkaters) if (skater.group_id) ensureGroupFilterOption(skater);
+            if (groupId < 0) {
+                const actual = allSkaters.find(skater => skater.group_id > 0 && window.CATRinkOfflineModel.groupId({group_name: skater.group_name}) === groupId);
+                if (actual) {
+                    groupId = Number(actual.group_id); body.dataset.groupId = String(groupId); saveViewState();
+                    const pageUrl = new URL(location.href); pageUrl.searchParams.set('group_id', String(groupId)); window.history.replaceState({}, '', pageUrl);
+                    document.querySelectorAll('.rink-activity-card').forEach(link => { const url = new URL(link.href); url.searchParams.set('group_id', String(groupId)); link.href = url.href; });
+                }
+            }
+            groupFilterSelector.querySelectorAll('[data-rink-group-filter]').forEach(option => {
+                const id = Number(option.dataset.groupId || 0);
+                const count = id ? allSkaters.filter(skater => Number(skater.group_id) === id).length : allSkaters.length;
+                option.dataset.groupCount = String(count); option.hidden = !!id && !count;
+                const countLabel = option.querySelector('small'); if (countLabel) countLabel.textContent = `${count} ${count === 1 ? 'skater' : 'skaters'}`;
+                option.classList.toggle('is-selected', id === groupId);
+                if (id === groupId) renderGroupSelectorSummary(option.dataset.groupName, count);
+            });
+            // Palette buttons in cached HTML may still have a temporary or obsolete ID.
+            groupDialog?.querySelectorAll('[data-rink-group-choice]').forEach(choice => {
+                if (choice.dataset.unassign === '1') return;
+                const actual = allSkaters.find(skater => skater.group_name === choice.dataset.groupName);
+                if (actual) choice.dataset.groupId = String(actual.group_id || '');
+            });
+        }
+        rosterData = window.CATRinkOffline.get(rosterEndpoint());
+        assessData = window.CATRinkOffline.get(assessEndpoint());
+        if (rosterBody) renderRoster();
+        if (isAssessView) renderAssess();
+        if (activeProfileId && profileDialog?.open) {
+            activeProfileData = window.CATRinkOffline.get(withQuery(`${apiBase}/${encodeURIComponent(activeProfileId)}`, {season_id: seasonId, session_id: sessionId}));
+            if (activeProfileData) renderProfile();
+        }
+    };
+    refreshOfflineView();
+    window.addEventListener('rink-offline-data', refreshOfflineView);
+    window.addEventListener('rink-offline-conflict', (event) => {
+        showToast(event.detail?.message || 'Another coach changed this record while you were offline.', true, true);
+    });
+    window.addEventListener('rink-offline-status', () => {
+        const wasConnected = rinkConnected;
+        setConnectionStatus(window.CATRinkOffline.connected);
+        if (!rinkConnected) { reportCardSelectionActive = false; selectedReportCardSkaterIds.clear(); setReportCardsPanelOpen(false); renderAssess(); }
+        if (!wasConnected && rinkConnected) { void syncPendingChatRead(); refreshChat(); }
+    });
+    setConnectionStatus(window.CATRinkOffline?.connected ?? true);
+    if (connectionStatus && !rosterBody) window.setInterval(checkConnection, 2000);
     if (rosterBody) window.setInterval(refreshRoster, 2000);
-    if (sessionId) window.setInterval(isChatView ? refreshChat : refreshChatUnread, 2000);
+    if (sessionId && !isChatView) window.setInterval(refreshChatUnread, 2000);
+    if (sessionId && isChatView) window.setInterval(refreshChat, 2000);
+    void refreshChatUnread();
+    window.addEventListener('online', () => { void syncPendingChatRead(); });
+    window.addEventListener('focus', () => { void checkConnection(); void syncPendingChatRead(); });
 })();

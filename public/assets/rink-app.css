@@ -92,6 +92,7 @@
 .rink-activity-roster { --activity-colour: #2f6fb5; }
 .rink-activity-skills { --activity-colour: #9a6c17; }
 .rink-activity-chat { --activity-colour: #327f69; }
+.rink-chat-icon { position: relative; }
 .rink-chat-icon svg { width: 82%; height: 82%; overflow: visible; fill: none; stroke: currentColor; stroke-width: 3.1; stroke-linecap: round; stroke-linejoin: round; }
 .rink-chat-icon circle { fill: currentColor; stroke: none; }
 .rink-activity-grid.is-workspace { gap: 8px; margin-bottom: 0; border-radius: 16px 16px 0 0; }
@@ -146,13 +147,17 @@
     min-height: 52px;
     box-sizing: border-box;
     align-items: center;
-    justify-content: center;
-    gap: 9px;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 0 10px;
     border: 0;
     background: transparent;
     color: #17653f;
+    overflow: hidden;
+    white-space: nowrap;
 }
-.rink-connection-status strong { font-size: .82rem; }
+.rink-connection-status strong { flex: 0 0 auto; font-size: .75rem; }
+.rink-offline-status { overflow: hidden; color: var(--slate-500); font-size: .68rem; font-weight: 700; text-overflow: ellipsis; }
 .rink-connection-dot {
     width: 12px;
     height: 12px;
@@ -164,6 +169,7 @@
 .rink-connection-status.is-offline .rink-connection-dot {
     background: #d93636;
 }
+.rink-connection-status.is-offline .rink-offline-status { color: #a32222; }
 .rink-activity-page {
     --rink-page-colour: #2f6fb5;
     position: relative;
@@ -464,6 +470,7 @@
 .rink-roster-table td.rink-age-cell,
 .rink-roster-table td.rink-attendance-cell { padding-inline: 0; }
 .rink-attendance-cell input { width: 22px; height: 22px; margin: 0; accent-color: #2c7b52; cursor: pointer; }
+.rink-attendance-cell.is-pending-sync input { accent-color: #d3921e; }
 .rink-attendance-cell:not(.is-recorded) input:not(:disabled) { outline: 1px dashed var(--slate-300); outline-offset: 2px; }
 .rink-attendance-cell input:disabled { cursor: not-allowed; opacity: .45; }
 .rink-assess-stage-strip {
@@ -619,8 +626,20 @@
     background: #fff;
     box-shadow: 0 12px 32px rgba(38, 54, 78, .08);
 }
-.rink-chat-unread { display: inline-grid; min-width: 18px; height: 18px; margin-left: 4px; place-items: center; padding: 0 3px; border-radius: 999px; background: #d33732; color: #fff; font-size: .6rem; font-weight: 900; line-height: 1; vertical-align: middle; }
+.rink-chat-labels { display: grid; gap: 1px; text-align: left; }
+.rink-activity-grid.is-workspace .rink-chat-labels { display: contents; }
+.rink-activity-grid.is-workspace .rink-chat-labels strong { font-size: .9rem; }
+.rink-activity-grid.is-workspace .rink-chat-labels small { font-size: .62rem; }
+.rink-chat-unread { position: absolute; z-index: 1; top: -5px; right: -5px; display: inline-grid; min-width: 18px; height: 18px; box-sizing: border-box; place-items: center; padding: 0 3px; border: 2px solid #fff; border-radius: 999px; background: #d33732; color: #fff; font-size: .55rem; font-weight: 900; line-height: 1; }
 .rink-chat-unread[hidden] { display: none; }
+.rink-chat-unread.is-alerting { animation: rink-chat-unread-pulse .55s ease-in-out 3; }
+@keyframes rink-chat-unread-pulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(211, 55, 50, 0); }
+    45% { transform: scale(1.14); box-shadow: 0 0 0 3px rgba(211, 55, 50, .22); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .rink-chat-unread.is-alerting { animation: none; }
+}
 .rink-chat-card { display: grid; width: 100%; min-width: 0; height: min(620px, calc(100dvh - 250px)); min-height: 330px; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; border: 1px solid var(--slate-200); border-radius: 16px; background: #fff; box-shadow: 0 12px 32px rgba(38, 54, 78, .08); }
 .rink-chat-card > header { display: flex; align-items: end; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--slate-200); }
 .rink-chat-card h2 { margin: 2px 0 0; font-size: 1.1rem; }
@@ -893,6 +912,9 @@
 .rink-assess-skill-cell.is-locked .rink-assess-skill-toggle input {
     accent-color: #cf303d;
 }
+.rink-assess-skill-cell.is-pending-sync .rink-assess-skill-toggle input {
+    accent-color: #d3921e;
+}
 .rink-assess-table.is-stage-expanded .rink-assess-skill-header.ribbon-balance,
 .rink-assess-skill-cell.ribbon-balance { background: #f0f9f3; }
 .rink-assess-table.is-stage-expanded .rink-assess-skill-header.ribbon-control,
@@ -1066,8 +1088,12 @@
     }
     .rink-connection-status { min-height: 44px; gap: 5px; }
     .rink-connection-status strong { font-size: .65rem; }
+    .rink-offline-status { font-size: .55rem; }
     .rink-connection-dot { width: 9px; height: 9px; }
     .rink-activity-grid.is-workspace .rink-activity-icon { display: none; }
+    .rink-activity-grid.is-workspace .rink-activity-chat .rink-chat-icon { position: absolute; top: 6px; right: 6px; display: block; width: 0; height: 0; background: transparent; }
+    .rink-activity-grid.is-workspace .rink-activity-chat .rink-chat-icon svg { display: none; }
+    .rink-activity-grid.is-workspace .rink-activity-chat .rink-chat-unread { top: 0; right: 0; }
     .rink-activity-grid.is-workspace .rink-activity-card strong,
     .rink-activity-grid.is-workspace .rink-activity-card small { justify-self: center; }
     .rink-bar-group-selector summary { min-height: 51px; padding-inline: 5px 18px; }
@@ -1147,3 +1173,7 @@
 .rink-report-cards-action-note { border-color: var(--amber-700); color: #704600; background: var(--amber-100); }
 .rink-report-cards-action-note:hover, .rink-report-cards-action-note:focus-visible { border-color: #7f5000; background: #ffe8a2; }
 .rink-report-cards-action-generate:disabled { border-color: #bdd9d1; color: #66867d; background: #edf7f4; }
+
+.rink-is-offline [data-rink-edit-report-card-note],
+.rink-is-offline [data-rink-select-report-card-skater],
+.rink-is-offline [data-rink-select-all-report-cards] { opacity: .4; cursor: not-allowed; }

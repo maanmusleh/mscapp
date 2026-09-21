@@ -65,10 +65,6 @@ $userInitials = strtoupper($userInitials !== '' ? $userInitials : mb_substr($dis
                         <div><h3>Download a backup</h3><p>Save a complete, portable SQL file that can be restored under a different database name.</p></div>
                         <form method="post" action="<?= e(url('admin-tools/backup')) ?>"><input type="hidden" name="_token" value="<?= e(csrf_token()) ?>"><button class="button button-primary" type="submit">Download SQL backup</button></form>
                     </div>
-                    <div class="database-backup-row">
-                        <div><h3>Import historical CanSkate data</h3><p>Run the one-time, all-or-nothing Excel import for skaters, season registrations, and Stage 1–5 achievement dates.</p></div>
-                        <a class="button button-secondary" href="<?= e(url('legacy-achievement-import')) ?>">Open historical import</a>
-                    </div>
                     <div class="database-restore-panel" aria-labelledby="restore-heading">
                         <div class="database-restore-heading"><div><span class="eyebrow">Destructive action</span><h3 id="restore-heading">Restore a backup</h3></div><p>Restoring replaces the contents of the configured CAT database, regardless of the database name in the backup. CAT creates a temporary safety backup before replacement.</p></div>
                         <form class="database-restore-form" method="post" action="<?= e(url('admin-tools/restore')) ?>" enctype="multipart/form-data">
@@ -110,17 +106,36 @@ $userInitials = strtoupper($userInitials !== '' ? $userInitials : mb_substr($dis
                 </form>
             </section>
 
-            <section class="user-card admin-tools-card stage-settings-card" id="stage-settings" aria-labelledby="stage-settings-heading">
-                <div class="card-heading"><h2 id="stage-settings-heading">Enabled stages</h2><p>Stage availability applies system-wide. Disabled stages are unavailable in the Coach App.</p></div>
-                <?php if ($stageSettingsFlash !== null): ?><div class="alert alert-<?= e($stageSettingsFlash['type'] ?? 'error') ?> user-management-alert" role="status"><?= e($stageSettingsFlash['message'] ?? '') ?></div><?php endif; ?>
-                <form method="post" action="<?= e(url('admin-tools/stages')) ?>" class="stage-settings-form"><input type="hidden" name="_token" value="<?= e(csrf_token()) ?>"><div class="stage-setting-grid"><?php foreach ($stages as $stage): ?><label class="setting-checkbox"><input type="checkbox" name="enabled_stage_ids[]" value="<?= e($stage['id']) ?>" <?= $stage['active'] ? 'checked' : '' ?>><span><?= e($stage['stage_number'] === 0 ? 'Pre-CanSkate' : 'Stage ' . $stage['stage_number']) ?></span></label><?php endforeach; ?></div><button class="button button-primary" type="submit">Save stages</button></form>
-            </section>
+            <div class="admin-tools-settings-column">
+                <section class="user-card admin-tools-card stage-settings-card" id="stage-settings" aria-labelledby="stage-settings-heading">
+                    <div class="card-heading"><h2 id="stage-settings-heading">Enabled stages</h2><p>Stage availability applies system-wide. Disabled stages are unavailable in the Coach App.</p></div>
+                    <?php if ($stageSettingsFlash !== null): ?><div class="alert alert-<?= e($stageSettingsFlash['type'] ?? 'error') ?> user-management-alert" role="status"><?= e($stageSettingsFlash['message'] ?? '') ?></div><?php endif; ?>
+                    <form method="post" action="<?= e(url('admin-tools/stages')) ?>" class="stage-settings-form"><input type="hidden" name="_token" value="<?= e(csrf_token()) ?>"><div class="stage-setting-grid"><?php foreach ($stages as $stage): ?><label class="setting-checkbox"><input type="checkbox" name="enabled_stage_ids[]" value="<?= e($stage['id']) ?>" <?= $stage['active'] ? 'checked' : '' ?>><span><?= e($stage['stage_number'] === 0 ? 'Pre-CanSkate' : 'Stage ' . $stage['stage_number']) ?></span></label><?php endforeach; ?></div><button class="button button-primary" type="submit">Save stages</button></form>
+                </section>
+
+                <section class="user-card admin-tools-card chat-retention-card" id="chat-retention" aria-labelledby="chat-retention-heading">
+                    <div class="card-heading"><span class="eyebrow">Coach App</span><h2 id="chat-retention-heading">Message deletion</h2><p>Set how long new chat messages remain before they are automatically deleted. A message-specific deletion time overrides this setting.</p></div>
+                    <?php if ($chatRetentionFlash !== null): ?><div class="alert alert-<?= e($chatRetentionFlash['type'] ?? 'error') ?> user-management-alert" role="status"><?= e($chatRetentionFlash['message'] ?? '') ?></div><?php endif; ?>
+                    <form method="post" action="<?= e(url('admin-tools/chat-retention')) ?>" class="totp-policy-form chat-retention-form">
+                        <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
+                        <label>Days<input name="chat_retention_days" type="number" min="0" max="365" step="1" inputmode="numeric" value="<?= e((string) $chatRetention['days']) ?>" required></label>
+                        <label>Hours<input name="chat_retention_hours" type="number" min="0" max="23" step="1" inputmode="numeric" value="<?= e((string) $chatRetention['hours']) ?>" required></label>
+                        <button class="button button-primary" type="submit">Save deletion timing</button>
+                    </form>
+                </section>
+            </div>
 
         </div>
 
         <section class="user-card admin-users-card" id="users" aria-labelledby="users-heading">
             <div class="card-heading admin-users-heading"><div><h2 id="users-heading">User management</h2><p>Add accounts, assign access, and issue temporary password resets.</p></div><span class="count-pill"><?= count($users) ?> <?= count($users) === 1 ? 'user' : 'users' ?></span></div>
             <?php if ($userManagementFlash !== null): ?><div class="alert alert-<?= e($userManagementFlash['type'] ?? 'error') ?> user-management-alert"><?= e($userManagementFlash['message'] ?? '') ?></div><?php endif; ?>
+            <?php if ($coachAccessFlash !== null): ?><div class="alert alert-<?= e($coachAccessFlash['type'] ?? 'error') ?> user-management-alert" role="status"><?= e($coachAccessFlash['message'] ?? '') ?></div><?php endif; ?>
+            <form class="coach-session-access-form" method="post" action="<?= e(url('admin-tools/coach-session-access')) ?>">
+                <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
+                <label class="setting-toggle"><span><strong>Restrict coach access to assigned sessions</strong><small>When enabled, coaches can open only sessions where they are assigned to at least one colour group.</small></span><input name="restrict_coach_session_access" type="checkbox" value="1" <?= $coachSessionAccessRestricted ? 'checked' : '' ?> aria-label="Restrict coach access to assigned sessions"></label>
+                <button class="button button-primary" type="submit">Save coach access</button>
+            </form>
             <div class="admin-users-content">
                 <div class="admin-users-create" aria-labelledby="add-user-heading">
                     <h3 id="add-user-heading">Add a user</h3><p>They will use their email address to sign in and must change this temporary password at first login.</p>

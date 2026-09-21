@@ -265,8 +265,8 @@ final class LegacyAchievementImportService
                 'UPDATE skater
                  SET gender_id = COALESCE(:gender_id, gender_id),
                      parent_guardian_phone = COALESCE(:phone, parent_guardian_phone),
-                     active = 1, deleted_at = NULL, updated_by_user_id = :user_id
-                 WHERE id = :id AND club_id = :club_id'
+                     active = 1, updated_by_user_id = :user_id
+                 WHERE id = :id AND club_id = :club_id AND deleted_at IS NULL'
             );
             $enroll = $this->pdo->prepare(
                 'INSERT INTO skater_enrollment (
@@ -350,6 +350,7 @@ final class LegacyAchievementImportService
 
             $sessionIds = [];
             $skaterIds = [];
+            $skaterWasExisting = [];
             $skaterUpdated = [];
             $skillsBySkater = [];
             $ribbonsBySkater = [];
@@ -387,7 +388,8 @@ final class LegacyAchievementImportService
 
                 $identityKey = (string) $row['identity_key'];
                 if (!isset($skaterIds[$identityKey])) {
-                    if ($row['existing_skater_id'] === null) {
+                    $existingSkaterId = $this->activeSkaterIdForImport($clubId, $row);
+                    if ($existingSkaterId === null) {
                         $insertSkater->execute([
                             'club_id' => $clubId,
                             'gender_id' => $row['gender_id'],
@@ -400,6 +402,7 @@ final class LegacyAchievementImportService
                         ]);
                         $skaterIds[$identityKey] = (int) $this->pdo->lastInsertId();
                         $stats['skaters_created']++;
+                        $skaterWasExisting[$identityKey] = false;
                         $this->recordAudit(
                             $skaterIds[$identityKey],
                             'ADDED',
@@ -407,7 +410,8 @@ final class LegacyAchievementImportService
                             $userId
                         );
                     } else {
-                        $skaterIds[$identityKey] = (int) $row['existing_skater_id'];
+                        $skaterIds[$identityKey] = $existingSkaterId;
+                        $skaterWasExisting[$identityKey] = true;
                     }
                 }
                 $skaterId = $skaterIds[$identityKey];
@@ -418,7 +422,7 @@ final class LegacyAchievementImportService
                     'id' => $skaterId,
                     'club_id' => $clubId,
                 ]);
-                if (!isset($skaterUpdated[$skaterId]) && $row['existing_skater_id'] !== null) {
+                if (!isset($skaterUpdated[$skaterId]) && $skaterWasExisting[$identityKey]) {
                     $skaterUpdated[$skaterId] = true;
                     $stats['skaters_updated']++;
                 }
@@ -565,7 +569,8 @@ final class LegacyAchievementImportService
             'SELECT id FROM skater
              WHERE club_id = :club_id AND first_name = :first_name
                AND last_name = :last_name AND date_of_birth = :date_of_birth
-             ORDER BY deleted_at IS NULL DESC, id
+               AND deleted_at IS NULL
+             ORDER BY id
              LIMIT 3'
         );
         $checkedSkus = [];
@@ -602,6 +607,39 @@ final class LegacyAchievementImportService
             $row['existing_skater_id'] = $checkedSkaters[$identityKey];
         }
         unset($row);
+    }
+
+    /**
+     * Resolves a current profile from inside the import transaction. The lock
+     * prevents a delete from changing that profile before its enrollment is
+     * written; the database unique key closes the concurrent-create gap.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function activeSkaterIdForImport(int $clubId, array $row): ?int
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT id FROM skater
+             WHERE club_id = :club_id AND first_name = :first_name
+               AND last_name = :last_name AND date_of_birth = :date_of_birth
+               AND deleted_at IS NULL
+             ORDER BY id
+             LIMIT 2
+             FOR UPDATE'
+        );
+        $statement->execute([
+            'club_id' => $clubId,
+            'first_name' => $row['first_name'],
+            'last_name' => $row['last_name'],
+            'date_of_birth' => $row['date_of_birth'],
+        ]);
+        $ids = array_map('intval', $statement->fetchAll(PDO::FETCH_COLUMN));
+        if (count($ids) > 1) {
+            throw new RuntimeException(
+                'More than one active CAT skater now has the same FIRST, LAST, and DOB. Nothing was imported; resolve the duplicate profiles and validate the workbook again.'
+            );
+        }
+        return $ids[0] ?? null;
     }
 
     /** @return array<int, array<string, mixed>> */
