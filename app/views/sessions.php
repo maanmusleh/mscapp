@@ -79,7 +79,7 @@ foreach ($sessionGroups as $sessionId => $groups) {
                 <summary><span class="audit-toggle" aria-hidden="true"></span><strong id="seasons-heading">Seasons</strong></summary>
                 <div class="schedule-admin-grid">
                 <section class="schedule-admin-card">
-                    <?php foreach ($scheduleData['seasons'] as $season): ?>
+                    <?php foreach ($scheduleData['managed_seasons'] ?? $scheduleData['seasons'] as $season): ?>
                         <form method="post" action="<?= e(url('sessions/seasons')) ?>" class="schedule-row season-row" data-preserve-scroll>
                             <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
                             <input type="hidden" name="id" value="<?= e($season['id']) ?>">

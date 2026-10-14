@@ -124,6 +124,14 @@ self.addEventListener('fetch', event => {
         try {
             const response = await network(event.request);
             if (!isPage && response.status < 500) return response;
+            // Navigation fetches expose HTTP redirects as opaqueredirect responses.
+            // Let the browser follow login/password/TOTP redirects instead of replacing
+            // them with cached Coach App HTML or a misleading offline error.
+            if (isPage && response.type === 'opaqueredirect') return response;
+            if (isPage && response.redirected && response.status < 500 && isHtmlPage(response)) {
+                const destination = new URL(response.url);
+                if (destination.origin === url.origin && route(destination) !== 'rink-app') return response;
+            }
             if (isPage && response.ok && !response.redirected && isHtmlPage(response)) {
                 const active = await read('active-cache');
                 if (!active || response.headers.get('X-CAT-Rink-Owner') === active.owner) return response;

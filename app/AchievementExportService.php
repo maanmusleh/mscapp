@@ -17,7 +17,7 @@ final class AchievementExportService
         $seasons = $this->pdo->prepare(
             'SELECT id, name, start_date, end_date
              FROM season
-             WHERE club_id = :club_id AND deleted_at IS NULL
+             WHERE club_id = :club_id AND active = 1 AND deleted_at IS NULL
              ORDER BY
                 CASE WHEN end_date >= CURDATE() THEN 0 ELSE 1 END,
                 CASE WHEN end_date >= CURDATE() THEN start_date END DESC,
@@ -27,10 +27,12 @@ final class AchievementExportService
         $seasons->execute(['club_id' => $clubId]);
 
         $sessions = $this->pdo->prepare(
-            'SELECT id, season_id, name, day_of_week, start_time
-             FROM program_session
-             WHERE club_id = :club_id AND active = 1 AND deleted_at IS NULL
-             ORDER BY season_id, day_of_week, start_time, name'
+            'SELECT ps.id, ps.season_id, ps.name, ps.day_of_week, ps.start_time
+             FROM program_session ps
+             INNER JOIN season se ON se.id = ps.season_id AND se.club_id = ps.club_id
+                AND se.active = 1 AND se.deleted_at IS NULL
+             WHERE ps.club_id = :club_id AND ps.active = 1 AND ps.deleted_at IS NULL
+             ORDER BY ps.season_id, ps.day_of_week, ps.start_time, ps.name'
         );
         $sessions->execute(['club_id' => $clubId]);
 
@@ -42,6 +44,8 @@ final class AchievementExportService
                AND ps.club_id = :club_id
                AND ps.active = 1
                AND ps.deleted_at IS NULL
+             INNER JOIN season se ON se.id = ps.season_id AND se.club_id = ps.club_id
+                AND se.active = 1 AND se.deleted_at IS NULL
              WHERE pg.active = 1 AND pg.deleted_at IS NULL
              ORDER BY ps.season_id, ps.day_of_week, ps.start_time, ps.name, pg.display_order, pg.name'
         );
@@ -148,7 +152,8 @@ final class AchievementExportService
             throw new RuntimeException('Excel exports are not available on this server. Choose CSV instead.');
         }
 
-        $where = 'ps.club_id = :club_id AND ps.deleted_at IS NULL';
+        $where = 'ps.club_id = :club_id AND ps.deleted_at IS NULL
+            AND (ps.season_id IS NULL OR (s.active = 1 AND s.deleted_at IS NULL AND s.club_id = ps.club_id))';
         $parameters = ['club_id' => $clubId];
         $slug = 'all-seasons';
         if ($seasonFilter === 'unassigned') {
@@ -207,7 +212,7 @@ final class AchievementExportService
     {
         $statement = $this->pdo->prepare(
             'SELECT id, name FROM season
-             WHERE id = :season_id AND club_id = :club_id AND deleted_at IS NULL'
+             WHERE id = :season_id AND club_id = :club_id AND active = 1 AND deleted_at IS NULL'
         );
         $statement->execute(['season_id' => $seasonId, 'club_id' => $clubId]);
         $season = $statement->fetch();

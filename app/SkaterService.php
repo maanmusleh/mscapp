@@ -345,6 +345,7 @@ final class SkaterService
         $sessionRows = $this->pdo->prepare(
             'SELECT ps.id AS session_id, pg.id AS group_id
              FROM program_session ps
+             INNER JOIN season se ON se.id = ps.season_id AND se.active = 1 AND se.deleted_at IS NULL
              LEFT JOIN program_group pg
                 ON pg.program_session_id = ps.id
                AND pg.active = 1
@@ -376,6 +377,7 @@ final class SkaterService
             'SELECT e.id, e.program_session_id, e.active
              FROM skater_enrollment e
              INNER JOIN program_session ps ON ps.id = e.program_session_id
+             INNER JOIN season se ON se.id = ps.season_id AND se.active = 1 AND se.deleted_at IS NULL
              WHERE e.skater_id = :skater_id
                AND e.deleted_at IS NULL
                AND ps.club_id = :club_id
@@ -785,7 +787,7 @@ final class SkaterService
     {
         $statement = $this->pdo->prepare(
             'SELECT COUNT(*) FROM season
-             WHERE id = :season_id AND club_id = :club_id AND deleted_at IS NULL'
+             WHERE id = :season_id AND club_id = :club_id AND active = 1 AND deleted_at IS NULL'
         );
         $statement->execute(['season_id' => $seasonId, 'club_id' => $clubId]);
         $count = (int) $statement->fetchColumn();

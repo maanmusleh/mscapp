@@ -18,6 +18,7 @@ require_once __DIR__ . '/LoginActivityService.php';
 require_once __DIR__ . '/CanSkateRequirements.php';
 require_once __DIR__ . '/DashboardRepository.php';
 require_once __DIR__ . '/SkaterService.php';
+require_once __DIR__ . '/SkaterAttendanceService.php';
 require_once __DIR__ . '/RinkService.php';
 require_once __DIR__ . '/RinkOfflineService.php';
 require_once __DIR__ . '/LegacyAchievementImportService.php';

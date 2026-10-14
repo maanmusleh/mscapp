@@ -356,6 +356,8 @@ final class DashboardRepository
                AND ast.counts_as_present = 1
              INNER JOIN program_date pd_attendance ON pd_attendance.id = a.program_date_id
              INNER JOIN program_session ps_attendance ON ps_attendance.id = pd_attendance.program_session_id
+             INNER JOIN season se_attendance ON se_attendance.id = ps_attendance.season_id
+                AND se_attendance.active = 1 AND se_attendance.deleted_at IS NULL
              WHERE ps_attendance.season_id = ?'
         );
         $attendanceDays->execute([$seasonId]);
@@ -372,6 +374,8 @@ final class DashboardRepository
                 ON pd_attendance.id = a.program_date_id
              INNER JOIN program_session ps_attendance
                 ON ps_attendance.id = pd_attendance.program_session_id
+             INNER JOIN season se_attendance ON se_attendance.id = ps_attendance.season_id
+                AND se_attendance.active = 1 AND se_attendance.deleted_at IS NULL
              WHERE a.skater_id IN ($placeholders)
                AND ps_attendance.season_id = ?
              GROUP BY a.skater_id"
@@ -407,6 +411,7 @@ final class DashboardRepository
                 AND ps.deleted_at IS NULL
              INNER JOIN season se
                 ON se.id = ps.season_id
+                AND se.active = 1
                 AND se.deleted_at IS NULL
              LEFT JOIN group_assignment ga ON ga.id = (
                 SELECT ga2.id
@@ -459,6 +464,7 @@ final class DashboardRepository
                 AND ps.deleted_at IS NULL
              INNER JOIN season se
                 ON se.id = ps.season_id
+                AND se.active = 1
                 AND se.deleted_at IS NULL
              LEFT JOIN group_assignment ga ON ga.id = (
                 SELECT ga2.id
@@ -512,6 +518,7 @@ final class DashboardRepository
                 se.active
              FROM season se
              WHERE se.club_id = :club_id
+               AND se.active = 1
                AND se.deleted_at IS NULL
              ORDER BY
                 CASE
@@ -658,6 +665,7 @@ final class DashboardRepository
                 AND ps.season_id = :season_id
                 AND ps.active = 1
                 AND ps.deleted_at IS NULL
+             INNER JOIN season se ON se.id = ps.season_id AND se.active = 1 AND se.deleted_at IS NULL
              WHERE s.club_id = :club_id
                AND s.active = 1
                AND s.deleted_at IS NULL'
@@ -693,6 +701,7 @@ final class DashboardRepository
              INNER JOIN skater s ON s.id = a.skater_id
              INNER JOIN program_date pd ON pd.id = a.program_date_id
              INNER JOIN program_session ps ON ps.id = pd.program_session_id
+             INNER JOIN season se ON se.id = ps.season_id AND se.active = 1 AND se.deleted_at IS NULL
              WHERE s.club_id = :club_id
                AND ps.season_id = :season_id'
         );
@@ -776,7 +785,7 @@ final class DashboardRepository
              FROM skater_enrollment e
              INNER JOIN skater s ON s.id = e.skater_id
              INNER JOIN program_session ps ON ps.id = e.program_session_id
-             INNER JOIN season se ON se.id = ps.season_id
+             INNER JOIN season se ON se.id = ps.season_id AND se.active = 1 AND se.deleted_at IS NULL
              LEFT JOIN group_assignment ga ON ga.id = (
                 SELECT ga2.id
                 FROM group_assignment ga2
@@ -798,6 +807,7 @@ final class DashboardRepository
         $sessionOptionsStatement = $this->pdo->prepare(
             'SELECT
                 ps.id AS session_id,
+                se.id AS season_id,
                 ps.name AS session_name,
                 ps.day_of_week,
                 ps.start_time,
@@ -807,7 +817,7 @@ final class DashboardRepository
                 pg.name AS group_name,
                 pg.colour_hex AS group_colour
              FROM program_session ps
-             INNER JOIN season se ON se.id = ps.season_id
+             INNER JOIN season se ON se.id = ps.season_id AND se.active = 1 AND se.deleted_at IS NULL
              LEFT JOIN program_group pg
                 ON pg.program_session_id = ps.id
                AND pg.active = 1
@@ -824,6 +834,7 @@ final class DashboardRepository
             if (!isset($registrationOptions[$sessionId])) {
                 $registrationOptions[$sessionId] = [
                     'session_id' => $sessionId,
+                    'season_id' => (int) $row['season_id'],
                     'session_name' => $row['session_name'],
                     'season_name' => $row['season_name'],
                     'day_of_week' => (int) $row['day_of_week'],
@@ -841,55 +852,7 @@ final class DashboardRepository
             }
         }
 
-        $attendanceStatement = $this->pdo->prepare(
-            'SELECT
-                ps.name AS session_name,
-                (
-                    SELECT COUNT(DISTINCT pd_all.session_date)
-                    FROM attendance a_all
-                    INNER JOIN attendance_status ast_all
-                       ON ast_all.id = a_all.attendance_status_id
-                      AND ast_all.counts_as_present = 1
-                    INNER JOIN program_date pd_all ON pd_all.id = a_all.program_date_id
-                    WHERE pd_all.program_session_id = ps.id
-                ) AS recorded,
-                COUNT(DISTINCT CASE WHEN ast.counts_as_present = 1 THEN pd.session_date END) AS present
-             FROM attendance a
-             INNER JOIN attendance_status ast ON ast.id = a.attendance_status_id
-             INNER JOIN skater s ON s.id = a.skater_id
-             INNER JOIN program_date pd ON pd.id = a.program_date_id
-             INNER JOIN program_session ps ON ps.id = pd.program_session_id
-             WHERE s.club_id = :club_id
-               AND s.public_id = :public_id
-             GROUP BY ps.id, ps.name
-             ORDER BY ps.name'
-        );
-        $attendanceStatement->execute([
-            'club_id' => $clubId,
-            'public_id' => $publicId,
-        ]);
-
-        $recentAttendanceStatement = $this->pdo->prepare(
-            'SELECT
-                pd.session_date,
-                ps.name AS session_name,
-                ast.name AS status_name,
-                ast.code AS status_code,
-                a.notes
-             FROM attendance a
-             INNER JOIN attendance_status ast ON ast.id = a.attendance_status_id
-             INNER JOIN skater s ON s.id = a.skater_id
-             INNER JOIN program_date pd ON pd.id = a.program_date_id
-             INNER JOIN program_session ps ON ps.id = pd.program_session_id
-             WHERE s.club_id = :club_id
-               AND s.public_id = :public_id
-             ORDER BY pd.session_date DESC
-             LIMIT 12'
-        );
-        $recentAttendanceStatement->execute([
-            'club_id' => $clubId,
-            'public_id' => $publicId,
-        ]);
+        $attendanceDetail = (new SkaterAttendanceService($this->pdo))->detail($clubId, $publicId);
 
         $assessmentStatement = $this->pdo->prepare(
             'SELECT history.*
@@ -1156,24 +1119,13 @@ final class DashboardRepository
         }
         unset($stage);
 
-        $attendance = [];
-        foreach ($attendanceStatement->fetchAll() as $row) {
-            $recorded = (int) $row['recorded'];
-            $row['rate'] = $recorded > 0
-                ? (int) round(((int) $row['present'] / $recorded) * 100)
-                : null;
-            $attendance[] = $row;
-        }
-
-        return [
+        return array_merge($attendanceDetail, [
             'skater' => $skater,
             'genders' => $genders,
             'enrollments' => $enrollmentStatement->fetchAll(),
             'registration_options' => array_values($registrationOptions),
-            'attendance' => $attendance,
-            'recent_attendance' => $recentAttendanceStatement->fetchAll(),
             'achievement_editor' => $achievementEditor,
             'assessments' => $assessmentStatement->fetchAll(),
-        ];
+        ]);
     }
 }

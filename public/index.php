@@ -1869,6 +1869,27 @@ try {
         ]);
     }
 
+    if ($method === 'POST' && preg_match(
+        '#^/api/skaters/([0-9a-fA-F-]{36})/attendance$#',
+        $requestPath,
+        $matches
+    )) {
+        $user = Auth::requireRole(['ADMINISTRATOR', 'REGISTRAR']);
+        $input = request_json();
+        $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? ($input['_token'] ?? null);
+        if (!csrf_is_valid(is_string($token) ? $token : null)) {
+            json_response(['error' => 'Your session expired. Refresh and try again.'], 419);
+        }
+        $dateId = filter_var($input['program_date_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $revision = filter_var($input['revision'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+        if (!is_int($dateId) || !is_int($revision) || !is_bool($input['present'] ?? null)) {
+            throw new InvalidArgumentException('Choose a valid attendance day and attendance value.');
+        }
+        $attendance = new SkaterAttendanceService(Database::connection());
+        $attendance->update((int) $user['club_id'], (int) $user['id'], $matches[1], $dateId, $input['present'], $revision);
+        json_response(array_merge(['message' => 'Attendance saved.'], $attendance->detail((int) $user['club_id'], $matches[1])));
+    }
+
     if ($method === 'GET' && preg_match(
         '#^/api/skaters/([0-9a-fA-F-]{36})$#',
         $requestPath,

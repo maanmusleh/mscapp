@@ -17,7 +17,9 @@ final class ScheduleAdminService
         $statuses = $this->pdo->query('SELECT id, name FROM season_status WHERE active = 1 ORDER BY display_order, name')->fetchAll();
         $seasons = $this->pdo->prepare('SELECT id, name, NULL AS season_year, NULL AS season_term_id, season_status_id, start_date, end_date, active, updated_at FROM season WHERE club_id = :club_id AND deleted_at IS NULL ORDER BY CASE WHEN end_date >= CURDATE() THEN 0 ELSE 1 END, CASE WHEN end_date >= CURDATE() THEN start_date END DESC, CASE WHEN end_date < CURDATE() THEN end_date END DESC, name');
         $seasons->execute(['club_id' => $clubId]);
-        $sessionSql = 'SELECT ps.id, ps.season_id, ps.sku, ps.name, ps.day_of_week, ps.start_time, ps.end_time, ps.location, ps.updated_at, se.name AS season_name FROM program_session ps INNER JOIN season se ON se.id = ps.season_id WHERE ps.club_id = :club_id AND ps.deleted_at IS NULL';
+        $managedSeasons = $seasons->fetchAll();
+        $activeSeasons = array_values(array_filter($managedSeasons, static fn (array $season): bool => (int) $season['active'] === 1));
+        $sessionSql = 'SELECT ps.id, ps.season_id, ps.sku, ps.name, ps.day_of_week, ps.start_time, ps.end_time, ps.location, ps.updated_at, se.name AS season_name FROM program_session ps INNER JOIN season se ON se.id = ps.season_id AND se.active = 1 AND se.deleted_at IS NULL WHERE ps.club_id = :club_id AND ps.deleted_at IS NULL';
         $sessionParams = ['club_id' => $clubId];
         if ($selectedSeasonId !== null) {
             $sessionSql .= ' AND ps.season_id = :season_id';
@@ -58,12 +60,13 @@ final class ScheduleAdminService
                 ON ps.id = pg.program_session_id
                AND ps.club_id = :club_id
                AND ps.deleted_at IS NULL
+             INNER JOIN season se ON se.id = ps.season_id AND se.active = 1 AND se.deleted_at IS NULL
              WHERE pg.active = 1
                AND pg.deleted_at IS NULL
              ORDER BY pg.program_session_id, pg.display_order, pg.name'
         );
         $groups->execute(['club_id' => $clubId]);
-        return ['terms' => [], 'statuses' => $statuses, 'seasons' => $seasons->fetchAll(), 'sessions' => $sessions->fetchAll(), 'groups' => $groups->fetchAll(), 'rinks' => $this->rinks($clubId), 'users' => $users];
+        return ['terms' => [], 'statuses' => $statuses, 'seasons' => $activeSeasons, 'managed_seasons' => $managedSeasons, 'sessions' => $sessions->fetchAll(), 'groups' => $groups->fetchAll(), 'rinks' => $this->rinks($clubId), 'users' => $users];
     }
 
     public function saveSeason(int $clubId, int $userId, array $input): void
@@ -158,7 +161,7 @@ final class ScheduleAdminService
         if ($sessionId === null) {
             throw new InvalidArgumentException('Choose a valid session.');
         }
-        $session = $this->pdo->prepare('SELECT id FROM program_session WHERE id = :id AND club_id = :club_id AND deleted_at IS NULL');
+        $session = $this->pdo->prepare('SELECT ps.id FROM program_session ps INNER JOIN season se ON se.id = ps.season_id AND se.active = 1 AND se.deleted_at IS NULL WHERE ps.id = :id AND ps.club_id = :club_id AND ps.deleted_at IS NULL');
         $session->execute(['id' => $sessionId, 'club_id' => $clubId]);
         $sessionFound = $session->fetchColumn() !== false;
         $session->closeCursor();
@@ -281,7 +284,7 @@ final class ScheduleAdminService
         }
     }
     private function validateReportCardCoach(?int $userId): void { if ($userId === null) return; $statement = $this->pdo->prepare('SELECT id FROM app_user WHERE id = :id AND active = 1 AND deleted_at IS NULL'); $statement->execute(['id' => $userId]); $valid = $statement->fetchColumn() !== false; $statement->closeCursor(); if (!$valid) throw new InvalidArgumentException('Choose an active CAT user as the group coach.'); }
-    private function seasonBelongsToClub(int $seasonId, int $clubId): bool { $statement = $this->pdo->prepare('SELECT id FROM season WHERE id = :season_id AND club_id = :club_id AND deleted_at IS NULL'); $statement->execute(['season_id' => $seasonId, 'club_id' => $clubId]); return $statement->fetchColumn() !== false; }
+    private function seasonBelongsToClub(int $seasonId, int $clubId): bool { $statement = $this->pdo->prepare('SELECT id FROM season WHERE id = :season_id AND club_id = :club_id AND active = 1 AND deleted_at IS NULL'); $statement->execute(['season_id' => $seasonId, 'club_id' => $clubId]); return $statement->fetchColumn() !== false; }
     private function remove(string $table, int $clubId, int $userId, $id, string $column, string $message): void
     {
         $id = $this->id($id);

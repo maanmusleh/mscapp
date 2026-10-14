@@ -316,7 +316,7 @@ function asset(string $path): string
 function skate_canada_badge_assets(): array
 {
     return [
-        'emblem' => asset('skate-canada-emblem.png'),
+        'emblem' => asset('skate-canada-emblem-white.png'),
         'emblem_outline' => asset('skate-canada-emblem-outline.png'),
         'shape' => asset('skate-canada-badge-shape.png'),
         'outline' => asset('skate-canada-badge-outline.png'),

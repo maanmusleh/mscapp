@@ -2133,6 +2133,151 @@
         </label>
     `;
 
+    const skaterRecordSeasonOptions = (data, selected) => `
+        <option value="all" ${selected === 'all' ? 'selected' : ''}>All Seasons</option>
+        ${(data.attendance_seasons || []).map((season) => `
+            <option value="${escapeHtml(season.id)}" ${String(season.id) === selected ? 'selected' : ''}>${escapeHtml(season.name)}</option>
+        `).join('')}
+    `;
+
+    const mountRegistrationSeasonFilter = (data) => {
+        const section = drawerContent.querySelector('.registration-details');
+        const select = section?.querySelector('[data-registration-season-filter]');
+        if (!select) return;
+        const filter = () => {
+            const selected = select.value;
+            const rows = Array.from(section.querySelectorAll('[data-registration-season]'));
+            rows.forEach((row) => {
+                row.hidden = selected !== 'all' && row.dataset.registrationSeason !== selected;
+            });
+            const empty = section.querySelector('[data-registration-season-empty]');
+            if (empty) empty.hidden = rows.some((row) => !row.hidden);
+            const seasonIds = new Set((data.attendance_seasons || []).map((season) => String(season.id)));
+            const count = data.enrollments.filter((enrollment) => (
+                seasonIds.has(String(enrollment.season_id))
+                && (selected === 'all' || String(enrollment.season_id) === selected)
+            )).length;
+            section.querySelector('[data-registration-count]').textContent = String(count);
+        };
+        select.addEventListener('change', filter);
+        filter();
+    };
+
+    const mountSkaterAttendance = (initialData, permissions, publicId) => {
+        const container = drawerContent.querySelector('[data-skater-attendance]');
+        if (!container) return;
+        let data = initialData;
+        let summarySeason = String(data.attendance_default_season_id ?? 'all');
+        let recordsSeason = summarySeason;
+        let selectedSession = '';
+        let saving = false;
+        let pendingDay = null;
+        let pendingPresent = false;
+        let message = '';
+        let messageType = 'success';
+        const matchesSeason = (row, season) => season === 'all' || String(row.season_id) === season;
+        const seasonOptions = (selected) => skaterRecordSeasonOptions(data, selected);
+        const render = () => {
+            const summary = data.attendance.filter((row) => matchesSeason(row, summarySeason));
+            const sessions = data.attendance.filter((row) => matchesSeason(row, recordsSeason));
+            if (!sessions.some((session) => String(session.session_id) === selectedSession)) {
+                selectedSession = String(sessions[0]?.session_id ?? '');
+            }
+            const records = (data.attendance_records || []).filter((row) => (
+                matchesSeason(row, recordsSeason) && String(row.session_id) === selectedSession
+            ));
+            container.innerHTML = `
+                <div class="attendance-filters">
+                    <label><span>Attendance season</span><select data-attendance-summary-season ${saving ? 'disabled' : ''}>${seasonOptions(summarySeason)}</select></label>
+                </div>
+                <div class="attendance-summary">
+                    ${summary.length ? summary.map((row) => `
+                        <div class="attendance-summary-row">
+                            <span>${escapeHtml(row.session_name)}${summarySeason === 'all' ? `<small>${escapeHtml(row.season_name)}</small>` : ''}</span>
+                            <strong>${escapeHtml(row.present)}/${escapeHtml(row.recorded)}</strong>
+                            <b>${row.rate === null ? '—' : `${escapeHtml(row.rate)}%`}</b>
+                        </div>
+                    `).join('') : '<p class="empty-copy">No registered sessions in this season.</p>'}
+                </div>
+                <h4 class="attendance-records-heading">Attendance records</h4>
+                <div class="attendance-filters">
+                    <label><span>Records season</span><select data-attendance-records-season ${saving ? 'disabled' : ''}>${seasonOptions(recordsSeason)}</select></label>
+                    <label><span>Session</span><select data-attendance-session ${saving || !sessions.length ? 'disabled' : ''}>
+                        ${sessions.length ? sessions.map((session) => `
+                            <option value="${escapeHtml(session.session_id)}" ${String(session.session_id) === selectedSession ? 'selected' : ''}>${escapeHtml(session.session_name)}${recordsSeason === 'all' ? ` — ${escapeHtml(session.season_name)}` : ''}</option>
+                        `).join('') : '<option value="">No registered sessions</option>'}
+                    </select></label>
+                </div>
+                <p class="attendance-records-copy">${permissions.can_edit ? 'Check or clear a day to save attendance. ' : ''}All days with recorded session attendance are listed.</p>
+                ${records.length ? `<div class="attendance-list">
+                    ${records.map((row) => `
+                        <div>
+                            <span>${formatDate(row.session_date)}</span>
+                            <label class="attendance-check">
+                                <input type="checkbox" data-attendance-day="${escapeHtml(row.program_date_id)}"
+                                    aria-label="Present on ${escapeHtml(formatDate(row.session_date))} for ${escapeHtml(row.session_name)}"
+                                    ${(row.program_date_id === pendingDay ? pendingPresent : row.present) ? 'checked' : ''} ${saving || !permissions.can_edit || row.cancelled ? 'disabled' : ''}>
+                                <span>Present</span>
+                            </label>
+                            <em class="attendance-status status-${escapeHtml(String(row.status_code || 'unrecorded').toLowerCase())}">${escapeHtml(row.cancelled ? 'Cancelled' : row.status_name || 'Not recorded')}</em>
+                        </div>
+                    `).join('')}
+                </div>` : '<p class="empty-copy">No attendance has been taken for this session.</p>'}
+                <div class="form-message ${messageType}" data-attendance-message role="status" aria-live="polite" ${message ? '' : 'hidden'}>${escapeHtml(message)}</div>
+            `;
+        };
+        container.addEventListener('change', async (event) => {
+            const control = event.target;
+            if (control.matches('[data-attendance-summary-season]')) summarySeason = control.value;
+            else if (control.matches('[data-attendance-records-season]')) recordsSeason = control.value;
+            else if (control.matches('[data-attendance-session]')) selectedSession = control.value;
+            else if (control.matches('[data-attendance-day]') && permissions.can_edit && !saving) {
+                const record = data.attendance_records.find((row) => String(row.program_date_id) === control.dataset.attendanceDay);
+                if (!record || record.cancelled) return;
+                const present = control.checked;
+                saving = true;
+                pendingDay = record.program_date_id;
+                pendingPresent = present;
+                message = 'Saving attendance…';
+                messageType = 'info';
+                render();
+                try {
+                    const response = await fetch(`${document.body.dataset.apiBase}/${encodeURIComponent(publicId)}/attendance`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json', Accept: 'application/json',
+                            'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').content,
+                        },
+                        body: JSON.stringify({program_date_id: record.program_date_id, present, revision: record.revision}),
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || 'Attendance could not be saved.');
+                    data = result;
+                    message = result.message;
+                    messageType = 'success';
+                    addNewSkaterToCurrentRoster(publicId).catch(() => {});
+                } catch (error) {
+                    message = error.message;
+                    messageType = 'error';
+                } finally {
+                    saving = false;
+                    pendingDay = null;
+                    if (container.isConnected && activeSkaterId === publicId) {
+                        const restoreFocus = document.activeElement === document.body;
+                        render();
+                        if (restoreFocus) container.querySelector(`[data-attendance-day="${record.program_date_id}"]`)?.focus();
+                    }
+                }
+                return;
+            } else return;
+            const focusAttribute = control.hasAttribute('data-attendance-summary-season') ? 'data-attendance-summary-season'
+                : control.hasAttribute('data-attendance-records-season') ? 'data-attendance-records-season' : 'data-attendance-session';
+            render();
+            container.querySelector(`[${focusAttribute}]`)?.focus();
+        });
+        render();
+    };
+
     const renderDetail = (data) => {
         const skater = data.skater;
         const permissions = data.permissions;
@@ -2152,7 +2297,7 @@
                                 ? ''
                                 : String(enrollment.group_id);
                             return `
-                                <label class="registration-editor-row">
+                                <label class="registration-editor-row" data-registration-season="${escapeHtml(session.season_id)}">
                                     <input
                                         type="checkbox"
                                         value="${escapeHtml(session.session_id)}"
@@ -2178,15 +2323,20 @@
                                     </span>
                                 </label>
                             `;
-                        }).join('') || '<p class="empty-copy">No active sessions are available.</p>'}
+                        }).join('')}
                     </div>
                     <div class="form-message" data-registration-message hidden></div>
                     <button class="button button-primary" type="submit">Save sessions & groups</button>
                 </form>
             `
             : '';
-        const enrollments = data.enrollments.map((enrollment) => `
-            <article class="session-card">
+        const editableSessionIds = new Set((data.registration_options || []).map((session) => Number(session.session_id)));
+        const availableSeasonIds = new Set((data.attendance_seasons || []).map((season) => String(season.id)));
+        const enrollments = data.enrollments.filter((enrollment) => (
+            availableSeasonIds.has(String(enrollment.season_id))
+            && (!permissions.can_edit || !editableSessionIds.has(Number(enrollment.session_id)))
+        )).map((enrollment) => `
+            <article class="session-card" data-registration-season="${escapeHtml(enrollment.season_id)}">
                 <div class="session-card-head">
                     <div>
                         <strong>${escapeHtml(enrollment.session_name)}</strong>
@@ -2206,30 +2356,6 @@
                 </div>
             </article>
         `).join('');
-
-        const attendanceSummary = data.attendance.length
-            ? data.attendance.map((row) => `
-                <div class="attendance-summary-row">
-                    <span>${escapeHtml(row.session_name)}</span>
-                    <strong>${escapeHtml(row.present)}/${escapeHtml(row.recorded)}</strong>
-                    <b>${row.rate === null ? '—' : `${escapeHtml(row.rate)}%`}</b>
-                </div>
-            `).join('')
-            : '<p class="empty-copy">No attendance has been recorded yet.</p>';
-
-        const recentAttendance = data.recent_attendance.length
-            ? `
-                <div class="attendance-list">
-                    ${data.recent_attendance.map((row) => `
-                        <div>
-                            <span>${formatDate(row.session_date)}</span>
-                            <strong>${escapeHtml(row.session_name)}</strong>
-                            <em class="attendance-status status-${escapeHtml(String(row.status_code).toLowerCase())}">${escapeHtml(row.status_name)}</em>
-                        </div>
-                    `).join('')}
-                </div>
-            `
-            : '';
 
         const assessmentHistory = (data.assessments || []).length
             ? `
@@ -2454,11 +2580,16 @@
             <details class="drawer-section audit-details registration-details">
                 <summary class="audit-summary">
                     <div><h3>SESSIONS &amp; GROUPS</h3></div>
-                    <span class="count-pill">${data.enrollments.length}</span>
+                    <span class="count-pill" data-registration-count>${data.enrollments.length}</span>
                     <span class="audit-toggle" aria-hidden="true"></span>
                 </summary>
                 <div class="audit-details-content">
-                    ${registrationEditor || `<div class="session-list">${enrollments || '<p class="empty-copy">No session registrations found.</p>'}</div>`}
+                    <div class="attendance-filters">
+                        <label><span>Sessions &amp; Groups season</span><select data-registration-season-filter>${skaterRecordSeasonOptions(data, String(data.attendance_default_season_id ?? 'all'))}</select></label>
+                    </div>
+                    ${registrationEditor}
+                    ${enrollments ? `<div class="session-list">${enrollments}</div>` : ''}
+                    <p class="empty-copy" data-registration-season-empty hidden>No sessions or groups found in this season.</p>
                 </div>
             </details>
 
@@ -2468,8 +2599,7 @@
                     <span class="audit-toggle" aria-hidden="true"></span>
                 </summary>
                 <div class="audit-details-content">
-                    <div class="attendance-summary">${attendanceSummary}</div>
-                    ${recentAttendance}
+                    <div data-skater-attendance></div>
                 </div>
             </details>
 
@@ -2485,6 +2615,9 @@
             </details>
             ${editForm}
         `;
+
+        mountSkaterAttendance(data, permissions, skater.public_id);
+        mountRegistrationSeasonFilter(data);
 
         const form = drawerContent.querySelector('[data-skater-edit]');
         form?.addEventListener('submit', saveSkater);

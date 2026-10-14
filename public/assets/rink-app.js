@@ -173,6 +173,8 @@
     rinkNavigator?.querySelector('[data-rink-session]')?.addEventListener('change', (event) => event.currentTarget.form?.submit());
     const rosterBody = document.querySelector('[data-rink-roster-body]');
     const noResults = document.querySelector('[data-rink-no-results]');
+    const rosterNameInput = document.querySelector('[data-rink-roster-name-filter]');
+    const rosterNameClear = document.querySelector('[data-rink-roster-name-clear]');
     const reportCardsToolbar = document.querySelector('.rink-report-cards-toolbar');
     const reportCardsPanel = document.querySelector('[data-rink-report-cards-panel]');
     const reportCardsTab = document.querySelector('[data-rink-report-cards-tab]');
@@ -207,6 +209,87 @@
     const assessBody = document.querySelector('[data-rink-assess-table-body]');
     const assessHead = document.querySelector('[data-rink-assess-table-head]');
     const assessTableWrap = document.querySelector('[data-rink-assess-table-wrap]');
+    // Keep the live header outside the body's horizontal scroller so the browser
+    // can stick it during scrolling without per-frame JavaScript positioning.
+    const refreshAssessStickyHeader = (() => {
+        if (!assessHead || !assessTableWrap) return () => {};
+        const assessTable = assessHead.closest('table');
+        const stickyHeader = document.createElement('div');
+        stickyHeader.className = 'rink-assess-sticky-header';
+        stickyHeader.hidden = true;
+        const headerScroll = document.createElement('div');
+        headerScroll.className = 'rink-assess-header-scroll';
+        const headerTable = document.createElement('table');
+        headerScroll.append(headerTable);
+        stickyHeader.append(headerScroll);
+        assessTableWrap.before(stickyHeader);
+        const syncScroll = (source, target) => {
+            if (target.scrollLeft !== source.scrollLeft) target.scrollLeft = source.scrollLeft;
+        };
+        headerScroll.addEventListener('scroll', () => syncScroll(headerScroll, assessTableWrap), {passive: true});
+        assessTableWrap.addEventListener('scroll', () => syncScroll(assessTableWrap, headerScroll), {passive: true});
+        const positionCategoryMenu = () => {
+            const selector = assessHead.querySelector('[data-rink-assess-category-selector][open]');
+            if (!selector) return;
+            const bounds = selector.querySelector('summary').getBoundingClientRect();
+            const menu = selector.querySelector('.rink-assess-category-menu');
+            menu.style.left = `${Math.max(8, Math.min(bounds.left + bounds.width / 2 - 87, window.innerWidth - 182))}px`;
+            menu.style.top = `${bounds.bottom + 6}px`;
+        };
+        assessHead.addEventListener('toggle', positionCategoryMenu, true);
+        headerScroll.addEventListener('scroll', positionCategoryMenu, {passive: true});
+        window.addEventListener('scroll', positionCategoryMenu, {passive: true});
+        const updateLayout = () => {
+            stickyHeader.hidden = assessTableWrap.hidden || !assessHead.rows.length;
+            if (stickyHeader.hidden) return;
+            const focused = assessHead.contains(document.activeElement) ? document.activeElement : null;
+            const selection = focused?.selectionStart == null ? null : [focused.selectionStart, focused.selectionEnd];
+            const scrollLeft = assessTableWrap.scrollLeft;
+            // Measure the complete table before fixing identical column widths in both parts.
+            assessTable.querySelector('colgroup')?.remove();
+            headerTable.querySelector('colgroup')?.remove();
+            assessTable.style.tableLayout = '';
+            assessTable.style.width = '';
+            assessTable.prepend(assessHead);
+            const widths = Array.from(assessHead.rows[0].cells, (cell) => cell.getBoundingClientRect().width);
+            const tableWidth = assessTable.getBoundingClientRect().width;
+            const columns = document.createElement('colgroup');
+            widths.forEach((width) => {
+                const column = document.createElement('col');
+                column.style.width = `${width}px`;
+                columns.append(column);
+            });
+            headerTable.className = assessTable.className;
+            headerTable.replaceChildren(columns.cloneNode(true), assessHead);
+            assessTable.prepend(columns);
+            for (const table of [assessTable, headerTable]) {
+                table.style.tableLayout = 'fixed';
+                table.style.width = `${tableWidth}px`;
+            }
+            assessTableWrap.scrollLeft = scrollLeft;
+            headerScroll.scrollLeft = assessTableWrap.scrollLeft;
+            positionCategoryMenu();
+            if (focused) {
+                focused.focus({preventScroll: true});
+                if (selection) focused.setSelectionRange(...selection);
+            }
+        };
+        let layoutFrame = null;
+        const scheduleLayout = () => {
+            if (layoutFrame !== null) return;
+            layoutFrame = window.requestAnimationFrame(() => { layoutFrame = null; updateLayout(); });
+        };
+        window.addEventListener('resize', scheduleLayout);
+        if (typeof ResizeObserver !== 'undefined') {
+            let previousWidth = 0;
+            new ResizeObserver(([entry]) => {
+                if (entry.contentRect.width === previousWidth) return;
+                previousWidth = entry.contentRect.width;
+                scheduleLayout();
+            }).observe(assessTableWrap);
+        }
+        return updateLayout;
+    })();
     const assessEmpty = document.querySelector('[data-rink-assess-empty]');
     const assessSummary = document.querySelector('[data-rink-assess-summary]');
     const assessCategorySelector = document.querySelector('[data-rink-assess-category-selector]');
@@ -333,15 +416,20 @@
         const check = (name) => {
             if (!name) return;
             const rectangle = fieldRectangle(name);
-            const xOffset = 0.75; // 1 px in PDF points at 96 dpi.
-            const yOffset = 0.1;
+            const scale = 1.45;
+            const markSize = 5 * scale;
+            const xOffset = 1.5; // 2 px in PDF points at 96 dpi.
+            const yOffset = 0.75; // 1 px upward in PDF points at 96 dpi.
+            // Position the larger tick slightly right and above the box centre.
             pages[0].drawSvgPath(
                 'M 0.12 2.35 C 0.38 2.08 0.68 2.05 0.93 2.30 C 1.22 2.60 1.48 3.00 1.70 3.38 C 2.15 2.15 2.70 0.86 3.45 0.25 C 3.82 -0.05 4.28 -0.10 4.72 0.08 C 3.78 0.78 3.12 1.65 2.62 2.66 C 2.23 3.45 1.95 4.22 1.72 4.86 C 1.40 4.18 1.04 3.58 0.62 3.04 C 0.42 2.77 0.24 2.55 0.12 2.35 Z',
                 {
-                    x: rectangle.x + xOffset,
-                    y: rectangle.y + rectangle.height + yOffset,
-                    scale: 1.1,
+                    x: rectangle.x + ((rectangle.width - markSize) / 2) + xOffset,
+                    y: rectangle.y + ((rectangle.height + markSize) / 2) + yOffset,
+                    scale,
                     color: window.PDFLib.rgb(0, 0, 0),
+                    borderColor: window.PDFLib.rgb(0, 0, 0),
+                    borderWidth: 0.3,
                 }
             );
         };
@@ -648,6 +736,8 @@
         ? restoredViewState.category
         : '';
     let assessMutating = false;
+    let assessNameFilter = typeof restoredViewState?.nameFilter === 'string' ? restoredViewState.nameFilter : '';
+    let rosterNameFilter = typeof restoredViewState?.nameFilter === 'string' ? restoredViewState.nameFilter : '';
     let chatData = null;
     let editingChatPublicId = null;
     const saveViewState = () => {
@@ -656,6 +746,7 @@
         const state = {
             groupId,
             sort: currentActivity === 'skills' ? assessActiveSort : activeSort,
+            nameFilter: currentActivity === 'skills' ? assessNameFilter : rosterNameFilter,
             tableScrollLeft: tableScroll?.scrollLeft || 0,
             tableScrollTop: tableScroll?.scrollTop || 0,
         };
@@ -761,6 +852,49 @@
         if (!hasNote) return '';
         return `<button class="rink-general-note-button" type="button" data-general-note-skater="${escapeHtml(skater.public_id)}" aria-label="View general note for ${escapeHtml(name)}" title="General note"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 2.5h10.8L17 5.7v11.8H3z"></path><path d="M13.8 2.5v3.3H17"></path><path d="M6 9h8M6 12h6" class="rink-general-note-lines"></path></svg></button>`;
     };
+    const applyRosterNameFilter = () => {
+        if (!rosterBody) return;
+        const query = rosterNameFilter.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+        const rows = Array.from(rosterBody.querySelectorAll('[data-rink-row]'));
+        rows.forEach((row) => {
+            row.hidden = !String(row.dataset.skaterName || '').toLocaleLowerCase().includes(query);
+        });
+        if (rosterNameClear) rosterNameClear.hidden = rosterNameFilter === '';
+        if (noResults) {
+            noResults.hidden = rows.some((row) => !row.hidden);
+            noResults.querySelector('p').textContent = query
+                ? 'No skaters match your search in this group.'
+                : 'No active skaters match this group.';
+        }
+    };
+    if (rosterNameInput) {
+        rosterNameInput.value = rosterNameFilter;
+        const updateRosterNameFilter = () => {
+            rosterNameFilter = rosterNameInput.value;
+            applyRosterNameFilter();
+            saveViewState();
+        };
+        rosterNameInput.addEventListener('input', updateRosterNameFilter);
+        const clearRosterNameFilter = () => {
+            rosterNameInput.value = '';
+            updateRosterNameFilter();
+            rosterNameInput.focus();
+        };
+        rosterNameClear?.addEventListener('click', clearRosterNameFilter);
+        rosterNameInput.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            clearRosterNameFilter();
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
+            if (event.target.closest('input, textarea, select, [contenteditable="true"]') || document.querySelector('dialog[open]')) return;
+            event.preventDefault();
+            rosterNameInput.focus();
+            rosterNameInput.select();
+        });
+    }
     const renderRoster = () => {
         if (!rosterBody || !rosterData) return;
         rosterBody.innerHTML = sortedSkaters().map((skater) => {
@@ -776,7 +910,7 @@
             const rosterCells = isAssessView
                 ? `${nameCells}<td class="rink-medical-cell">${generalNoteButton(skater, name)}${medicalButton(skater, name)}</td>`
                 : `${nameCells}<td class="rink-gender-cell">${escapeHtml(skater.gender_name || '—')}</td><td class="rink-age-cell">${escapeHtml(skater.age ?? '—')}</td><td class="rink-attendance-cell ${skater.attendance_recorded ? 'is-recorded' : ''} ${attendancePendingSync ? 'is-pending-sync' : ''}" title="${escapeHtml(attendanceStatusTitle)}"><input type="checkbox" data-rink-attendance data-skater-id="${escapeHtml(skater.public_id)}" aria-label="Mark ${escapeHtml(name)} present" ${skater.present ? 'checked' : ''} ${rosterData.attendance.enabled && canEditRink ? '' : 'disabled'}></td><td class="rink-medical-cell">${generalNoteButton(skater, name)}${medicalButton(skater, name)}</td>`;
-            return `<tr data-rink-row data-skater-id="${escapeHtml(skater.public_id)}"><td class="rink-skater-cell">${groupDot(skater)}</td>${rosterCells}</tr>`;
+            return `<tr data-rink-row data-skater-id="${escapeHtml(skater.public_id)}" data-skater-name="${escapeHtml(name)}"><td class="rink-skater-cell">${groupDot(skater)}</td>${rosterCells}</tr>`;
         }).join('');
         rosterBody.querySelectorAll('[data-rink-name-tag-colour]').forEach((tag) => {
             const colour = tag.dataset.rinkNameTagColour || '';
@@ -784,14 +918,14 @@
             tag.style.setProperty('--rink-name-tag-colour', colour);
             tag.style.setProperty('--rink-name-tag-text-colour', nameTagTextColour(colour));
         });
-        if (noResults) noResults.hidden = rosterData.skaters.length > 0;
+        applyRosterNameFilter();
         updateSortHeaders();
     };
 
     document.addEventListener('change', (event) => {
         const selectAll = event.target.closest('[data-rink-select-all-report-cards]');
         if (selectAll) {
-            assessBody?.querySelectorAll('[data-rink-select-report-card-skater]').forEach((input) => {
+            assessBody?.querySelectorAll('[data-rink-assess-row]:not([hidden]) [data-rink-select-report-card-skater]').forEach((input) => {
                 input.checked = selectAll.checked;
                 if (input.checked) selectedReportCardSkaterIds.add(input.value);
                 else selectedReportCardSkaterIds.delete(input.value);
@@ -804,7 +938,7 @@
         if (!input) return;
         if (input.checked) selectedReportCardSkaterIds.add(input.value);
         else selectedReportCardSkaterIds.delete(input.value);
-        const selectionInputs = Array.from(assessBody?.querySelectorAll('[data-rink-select-report-card-skater]') || []);
+        const selectionInputs = Array.from(assessBody?.querySelectorAll('[data-rink-assess-row]:not([hidden]) [data-rink-select-report-card-skater]') || []);
         const reportSelectAllInput = assessHead?.querySelector('[data-rink-select-all-report-cards]');
         if (reportSelectAllInput) {
             const selectedCount = selectionInputs.filter((control) => control.checked).length;
@@ -841,6 +975,44 @@
         return assessActiveSort.direction === 'asc' ? comparison : -comparison;
     });
     const assessSelectedStage = () => (assessData?.stages || []).find((stage) => String(stage.id) === String(activeAssessStageId || '')) || null;
+    const assessNameHeader = () => `<th data-rink-assess-sort-header="name" aria-sort="${assessActiveSort.key === 'name' ? (assessActiveSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}">
+        <div class="rink-assess-name-controls">
+            <div class="rink-assess-name-search">
+                <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="8" cy="8" r="5"></circle><path d="m12 12 5 5"></path></svg>
+                <input type="text" size="1" data-rink-assess-name-filter value="${escapeHtml(assessNameFilter)}" placeholder="Find skater…" aria-label="Filter skaters by first or last name" aria-keyshortcuts="/" title="Find a skater · Press / to focus · Escape to clear" autocomplete="off" spellcheck="false">
+                <button type="button" data-rink-assess-name-clear aria-label="Clear skater name filter" ${assessNameFilter ? '' : 'hidden'}>×</button>
+            </div>
+            <button type="button" data-rink-assess-sort="name" aria-label="Sort skaters by name" title="Sort by name"><span aria-hidden="true">${assessActiveSort.key === 'name' ? (assessActiveSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></button>
+        </div>
+    </th>`;
+    const applyAssessNameFilter = () => {
+        if (!assessHead || !assessBody) return;
+        const query = assessNameFilter.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+        const rows = Array.from(assessBody.querySelectorAll('[data-rink-assess-row]'));
+        rows.forEach((row) => {
+            row.hidden = !String(row.dataset.skaterName || '').toLocaleLowerCase().includes(query);
+        });
+        const clear = assessHead.querySelector('[data-rink-assess-name-clear]');
+        if (clear) clear.hidden = assessNameFilter === '';
+        let empty = assessBody.querySelector('[data-rink-assess-name-empty]');
+        if (!empty) {
+            empty = document.createElement('tr');
+            empty.dataset.rinkAssessNameEmpty = '';
+            empty.innerHTML = '<td><span role="status" aria-live="polite"></span></td>';
+            assessBody.append(empty);
+        }
+        empty.firstElementChild.colSpan = assessHead.querySelectorAll('th').length;
+        empty.hidden = !query || rows.some((row) => !row.hidden);
+        empty.querySelector('span').textContent = empty.hidden ? '' : 'No skaters match your search.';
+        const selectionInputs = Array.from(assessBody.querySelectorAll('[data-rink-assess-row]:not([hidden]) [data-rink-select-report-card-skater]'));
+        const selectAll = assessHead.querySelector('[data-rink-select-all-report-cards]');
+        if (selectAll) {
+            const selectedCount = selectionInputs.filter((input) => input.checked).length;
+            selectAll.checked = selectionInputs.length > 0 && selectedCount === selectionInputs.length;
+            selectAll.indeterminate = selectedCount > 0 && selectedCount < selectionInputs.length;
+            selectAll.disabled = selectionInputs.length === 0;
+        }
+    };
     const updateAssessSortHeaders = () => {
         document.querySelectorAll('[data-rink-assess-sort-header]').forEach((header) => {
             const selected = header.dataset.rinkAssessSortHeader === assessActiveSort.key;
@@ -851,6 +1023,15 @@
     };
     const renderAssess = () => {
         if (!isAssessView || !assessData) return;
+        const previousSearch = assessHead?.querySelector('[data-rink-assess-name-filter]');
+        const searchFocused = previousSearch === document.activeElement;
+        const searchSelection = [previousSearch?.selectionStart, previousSearch?.selectionEnd];
+        const restoreSearchFocus = () => {
+            const input = assessHead?.querySelector('[data-rink-assess-name-filter]');
+            if (!searchFocused || !input) return;
+            input.focus({preventScroll: true});
+            input.setSelectionRange(...searchSelection);
+        };
         const selectedStage = assessSelectedStage();
         assessRoot?.classList.toggle('has-selected-stage', Boolean(selectedStage));
         if (assessCategorySelector) assessCategorySelector.hidden = !selectedStage;
@@ -882,10 +1063,10 @@
                 const groupHeader = groupId
                     ? '<th class="rink-skater-icon-header"><span class="rink-static-header">Group</span></th>'
                     : `<th class="rink-skater-icon-header" data-rink-assess-sort-header="group" aria-sort="${assessActiveSort.key === 'group' ? (assessActiveSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" data-rink-assess-sort="group">Group<span aria-hidden="true">${assessActiveSort.key === 'group' ? (assessActiveSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></button></th>`;
-                if (assessHead) assessHead.innerHTML = `<tr><th class="rink-report-selection-header" style="background:#164a91;color:#fff"><input class="row-selection-checkbox" type="checkbox" data-rink-select-all-report-cards aria-label="Select all displayed skaters for report cards" title="Select all displayed skaters"></th><th class="rink-report-notes-header" data-rink-assess-sort-header="notes" aria-sort="${assessActiveSort.key === 'notes' ? (assessActiveSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}" style="background:#164a91;color:#fff"><button type="button" data-rink-assess-sort="notes">Notes<span aria-hidden="true">${assessActiveSort.key === 'notes' ? (assessActiveSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></button></th>${groupHeader}<th data-rink-assess-sort-header="name" aria-sort="${assessActiveSort.key === 'name' ? (assessActiveSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" data-rink-assess-sort="name">Name<span aria-hidden="true">${assessActiveSort.key === 'name' ? (assessActiveSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></button></th></tr>`;
+                if (assessHead) assessHead.innerHTML = `<tr><th class="rink-report-selection-header" style="background:#164a91;color:#fff"><input class="row-selection-checkbox" type="checkbox" data-rink-select-all-report-cards aria-label="Select all displayed skaters for report cards" title="Select all displayed skaters"></th><th class="rink-report-notes-header" data-rink-assess-sort-header="notes" aria-sort="${assessActiveSort.key === 'notes' ? (assessActiveSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}" style="background:#164a91;color:#fff"><button type="button" data-rink-assess-sort="notes">Notes<span aria-hidden="true">${assessActiveSort.key === 'notes' ? (assessActiveSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></button></th>${groupHeader}${assessNameHeader()}</tr>`;
                 if (assessBody) assessBody.innerHTML = selectableSkaters.map((skater) => {
                     const name = `${skater.first_name} ${skater.last_name}`;
-                    return `<tr data-rink-assess-row data-skater-id="${escapeHtml(skater.public_id)}"><td class="rink-report-selection-cell"><input type="checkbox" data-rink-select-report-card-skater value="${escapeHtml(skater.public_id)}" aria-label="Select ${escapeHtml(name)} for report cards" ${selectedReportCardSkaterIds.has(String(skater.public_id)) ? 'checked' : ''}></td><td class="rink-report-notes-cell"><button class="rink-report-note-edit ${String(skater.report_card_notes || '').trim() !== '' ? 'is-saved' : ''}" type="button" data-rink-edit-report-card-note="${escapeHtml(skater.public_id)}" aria-label="Edit report-card note for ${escapeHtml(name)}">Edit</button></td><td class="rink-skater-cell">${groupDot(skater, false)}</td><td class="rink-name-cell rink-assess-name-cell"><span class="rink-assess-skater-name"><strong>${escapeHtml(skater.first_name)}</strong><small>${escapeHtml(skater.last_name)}</small></span></td></tr>`;
+                    return `<tr data-rink-assess-row data-skater-id="${escapeHtml(skater.public_id)}" data-skater-name="${escapeHtml(name)}"><td class="rink-report-selection-cell"><input type="checkbox" data-rink-select-report-card-skater value="${escapeHtml(skater.public_id)}" aria-label="Select ${escapeHtml(name)} for report cards" ${selectedReportCardSkaterIds.has(String(skater.public_id)) ? 'checked' : ''}></td><td class="rink-report-notes-cell"><button class="rink-report-note-edit ${String(skater.report_card_notes || '').trim() !== '' ? 'is-saved' : ''}" type="button" data-rink-edit-report-card-note="${escapeHtml(skater.public_id)}" aria-label="Edit report-card note for ${escapeHtml(name)}">Edit</button></td><td class="rink-skater-cell">${groupDot(skater, false)}</td><td class="rink-name-cell rink-assess-name-cell"><span class="rink-assess-skater-name"><strong>${escapeHtml(skater.first_name)}</strong><small>${escapeHtml(skater.last_name)}</small></span></td></tr>`;
                 }).join('');
                 const selectionInputs = Array.from(assessBody?.querySelectorAll('[data-rink-select-report-card-skater]') || []);
                 const selectAll = assessHead?.querySelector('[data-rink-select-all-report-cards]');
@@ -895,7 +1076,10 @@
                     selectAll.indeterminate = selectedCount > 0 && selectedCount < selectionInputs.length;
                     selectAll.disabled = selectionInputs.length === 0;
                 }
+                applyAssessNameFilter();
+                restoreSearchFocus();
                 updateAssessSortHeaders();
+                refreshAssessStickyHeader();
                 return;
             }
             if (assessEmpty) {
@@ -908,6 +1092,7 @@
             if (assessHead) assessHead.innerHTML = '';
             if (assessBody) assessBody.innerHTML = '';
             updateAssessSortHeaders();
+            refreshAssessStickyHeader();
             return;
         }
 
@@ -968,9 +1153,9 @@
                 ${selectionHeader}
                 ${notesHeader}
                 ${groupHeader}
-                <th data-rink-assess-sort-header="name" aria-sort="${assessActiveSort.key === 'name' ? (assessActiveSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" data-rink-assess-sort="name">Name<span aria-hidden="true">${assessActiveSort.key === 'name' ? (assessActiveSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></button></th>
+                ${assessNameHeader()}
                 <th class="rink-assess-stage-header"><div class="rink-assess-stage-header-stack"><div data-rink-assess-category-slot></div><span>${escapeHtml(stageLabel)}</span></div></th>
-                ${stageExpanded ? skills.map((skill) => `<th class="rink-assess-skill-header ribbon-${escapeHtml(skill.category)}"><span>${escapeHtml(skill.name || skill.description || 'Skill')}</span></th>`).join('') : ''}
+                ${stageExpanded ? skills.map((skill) => `<th class="rink-assess-skill-header ribbon-${escapeHtml(skill.category)}"><span>${escapeHtml(String(skill.name || skill.description || 'Skill').replace(/\bforwards?\b/gi, 'FWD').replace(/\bbackwards?\b/gi, 'BWD'))}</span></th>`).join('') : ''}
             </tr>`;
             if (assessCategorySelector) assessHead.querySelector('[data-rink-assess-category-slot]')?.append(assessCategorySelector);
         }
@@ -996,7 +1181,7 @@
                 const noteCell = reportCardSelectionActive
                     ? `<td class="rink-report-notes-cell"><button class="rink-report-note-edit ${String(skater.report_card_notes || '').trim() !== '' ? 'is-saved' : ''}" type="button" data-rink-edit-report-card-note="${escapeHtml(skater.public_id)}" aria-label="Edit report-card note for ${escapeHtml(name)}">Edit</button></td>`
                     : '';
-                return `<tr data-rink-assess-row data-skater-id="${escapeHtml(skater.public_id)}">
+                return `<tr data-rink-assess-row data-skater-id="${escapeHtml(skater.public_id)}" data-skater-name="${escapeHtml(name)}">
                     ${selectionCell}
                     ${noteCell}
                     <td class="rink-skater-cell">${groupDot(skater, false)}</td>
@@ -1033,7 +1218,10 @@
             const requirements = ribbons.map((ribbon) => `${ribbon.name} ${ribbon.required_count || skillCount(ribbon)}/${skillCount(ribbon)}`).join(' · ');
             assessSummary.innerHTML = `<strong>${escapeHtml(stageLabel)}</strong><small>${activeAssessCategory === 'all' ? `All categories · ${requirements} required` : selectedRibbon ? `${escapeHtml(selectedRibbon.name)} · ${selectedRibbon.required_count || skillCount(selectedRibbon)}/${skillCount(selectedRibbon)} required` : 'Choose a category to show skills.'}</small>`;
         }
+        applyAssessNameFilter();
+        restoreSearchFocus();
         updateAssessSortHeaders();
+        refreshAssessStickyHeader();
     };
     const assessEndpoint = () => {
         const parameters = new URLSearchParams({season_id: String(seasonId), session_id: String(sessionId)});
@@ -1078,6 +1266,14 @@
             saveViewState();
         });
         assessHead?.addEventListener('click', (event) => {
+            if (event.target.closest('[data-rink-assess-name-clear]')) {
+                assessNameFilter = '';
+                const input = assessHead.querySelector('[data-rink-assess-name-filter]');
+                if (input) { input.value = ''; input.focus(); }
+                applyAssessNameFilter();
+                saveViewState();
+                return;
+            }
             const button = event.target.closest('[data-rink-assess-sort]');
             if (!button || !assessHead.contains(button)) return;
             const key = button.dataset.rinkAssessSort;
@@ -1089,6 +1285,31 @@
                 : {key, direction: 'asc'};
             renderAssess();
             saveViewState();
+        });
+        assessHead?.addEventListener('input', (event) => {
+            if (!event.target.matches('[data-rink-assess-name-filter]')) return;
+            assessNameFilter = event.target.value;
+            applyAssessNameFilter();
+            saveViewState();
+        });
+        assessHead?.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape' || !event.target.matches('[data-rink-assess-name-filter]')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            assessNameFilter = '';
+            event.target.value = '';
+            applyAssessNameFilter();
+            saveViewState();
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || event.isComposing
+                || event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
+                || document.querySelector('dialog[open]')) return;
+            const input = assessHead?.querySelector('[data-rink-assess-name-filter]');
+            if (!input || assessTableWrap?.hidden) return;
+            event.preventDefault();
+            input.focus();
+            input.select();
         });
         assessBody?.addEventListener('click', (event) => {
             const reportCardNoteButton = event.target.closest('[data-rink-edit-report-card-note]');
@@ -1945,7 +2166,8 @@
     };
     const renderChat = (stickToBottom = false) => {
         if (!chatHistory || !chatData) return;
-        const wasNearBottom = chatHistory.scrollHeight - chatHistory.scrollTop - chatHistory.clientHeight < 40;
+        const pageScroll = document.scrollingElement;
+        const wasNearBottom = pageScroll && pageScroll.scrollHeight - pageScroll.scrollTop - pageScroll.clientHeight < 40;
         const messages = chatData.messages || [];
         const posterColours = chatColoursByPoster(messages);
         chatHistory.innerHTML = messages.map((message) => {
@@ -1966,8 +2188,48 @@
         chatHistory.querySelectorAll('[data-rink-chat-bubble-colour]').forEach((bubble) => {
             bubble.style.setProperty('--rink-chat-bubble-colour', bubble.dataset.rinkChatBubbleColour || '#e9e9eb');
         });
-        if (stickToBottom || wasNearBottom) chatHistory.scrollTop = chatHistory.scrollHeight;
+        if (pageScroll && (stickToBottom || wasNearBottom)) pageScroll.scrollTop = pageScroll.scrollHeight;
     };
+    const chatTab = chatUnreadBadge?.closest('.rink-activity-chat');
+    let floatingChatAlert = null;
+    const chatTabInViewport = () => {
+        const bounds = chatTab.getBoundingClientRect();
+        return bounds.bottom > 0 && bounds.top < window.innerHeight
+            && bounds.right > 0 && bounds.left < window.innerWidth;
+    };
+    let chatTabVisible = chatTab ? chatTabInViewport() : false;
+    const updateFloatingChatAlert = () => {
+        if (!floatingChatAlert) return;
+        const count = Number(chatUnreadBadge.dataset.unreadCount || 0);
+        const label = `${count} new ${count === 1 ? 'message' : 'messages'}`;
+        floatingChatAlert.querySelector('strong').textContent = label;
+        floatingChatAlert.setAttribute('aria-label', `${label}. Open Chat`);
+        floatingChatAlert.hidden = !count || chatTabVisible;
+    };
+    if (chatTab && ['roster', 'skills'].includes(currentActivity)) {
+        floatingChatAlert = document.createElement('button');
+        floatingChatAlert.type = 'button';
+        floatingChatAlert.className = 'rink-floating-chat-alert';
+        floatingChatAlert.hidden = true;
+        floatingChatAlert.innerHTML = `${chatTab.querySelector('svg')?.outerHTML || ''}<span><strong></strong><small>Open Chat</small></span>`;
+        floatingChatAlert.addEventListener('click', () => chatTab.click());
+        document.body.append(floatingChatAlert);
+        if (typeof IntersectionObserver !== 'undefined') {
+            const chatTabObserver = new IntersectionObserver(([entry]) => {
+                chatTabVisible = entry.isIntersecting;
+                updateFloatingChatAlert();
+            });
+            chatTabObserver.observe(chatTab);
+        } else {
+            const updateChatTabVisibility = () => {
+                chatTabVisible = chatTabInViewport();
+                updateFloatingChatAlert();
+            };
+            window.addEventListener('scroll', updateChatTabVisibility, {passive: true});
+            window.addEventListener('resize', updateChatTabVisibility);
+        }
+        updateFloatingChatAlert();
+    }
     const updateChatUnread = (count) => {
         if (!chatUnreadBadge) return;
         const unreadCount = Math.max(0, Math.trunc(Number(count) || 0));
@@ -1976,6 +2238,7 @@
         chatUnreadBadge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
         chatUnreadBadge.setAttribute('aria-label', `${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`);
         chatUnreadBadge.hidden = unreadCount === 0;
+        updateFloatingChatAlert();
         if (unreadCount > previousCount) {
             chatUnreadBadge.classList.remove('is-alerting');
             void chatUnreadBadge.offsetWidth;

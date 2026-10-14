@@ -29,7 +29,7 @@ final class LegacyAchievementImportService
         $statement = $this->pdo->prepare(
             'SELECT id, name, start_date, end_date, active
              FROM season
-             WHERE club_id = :club_id AND deleted_at IS NULL
+             WHERE club_id = :club_id AND active = 1 AND deleted_at IS NULL
              ORDER BY CASE WHEN end_date >= CURDATE() THEN 0 ELSE 1 END,
                       CASE WHEN end_date >= CURDATE() THEN start_date END DESC,
                       CASE WHEN end_date < CURDATE() THEN end_date END DESC,
@@ -705,7 +705,7 @@ final class LegacyAchievementImportService
         }
         $statement = $this->pdo->prepare(
             'SELECT id, name, start_date, end_date FROM season
-             WHERE id = :id AND club_id = :club_id AND deleted_at IS NULL LIMIT 1'
+             WHERE id = :id AND club_id = :club_id AND active = 1 AND deleted_at IS NULL LIMIT 1'
         );
         $statement->execute(['id' => $seasonId, 'club_id' => $clubId]);
         $season = $statement->fetch();

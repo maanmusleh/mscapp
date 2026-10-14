@@ -208,6 +208,14 @@ $renderRinkNavigator = static function (bool $global = false) use ($filterOption
                 <section class="rink-roster-card">
                     <header class="rink-roster-toolbar">
                         <?= $renderGroupSelector() ?>
+                        <div class="rink-roster-name-filter">
+                            <label for="rink-roster-name-filter"><span>Find skater</span></label>
+                            <div class="rink-assess-name-search">
+                                <svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="8" cy="8" r="5"></circle><path d="m12 12 5 5"></path></svg>
+                                <input id="rink-roster-name-filter" type="text" size="1" data-rink-roster-name-filter placeholder="Find skater…" aria-label="Filter roster by first or last name" aria-keyshortcuts="/" title="Find a skater · Press / to focus · Escape to clear" autocomplete="off" spellcheck="false">
+                                <button type="button" data-rink-roster-name-clear aria-label="Clear skater name filter" hidden>×</button>
+                            </div>
+                        </div>
                     </header>
                     <div class="rink-table-scroll" tabindex="0" aria-label="Sortable session roster and attendance">
                         <table class="rink-roster-table is-roster">
@@ -227,7 +235,7 @@ $renderRinkNavigator = static function (bool $global = false) use ($filterOption
                             <tbody data-rink-roster-body></tbody>
                         </table>
                     </div>
-                    <div class="rink-no-results" data-rink-no-results <?= $rosterPayload['skaters'] !== [] ? 'hidden' : '' ?>><h3>No skaters found</h3><p>No active skaters match this group.</p></div>
+                    <div class="rink-no-results" data-rink-no-results role="status" aria-live="polite" <?= $rosterPayload['skaters'] !== [] ? 'hidden' : '' ?>><h3>No skaters found</h3><p>No active skaters match this group.</p></div>
                 </section>
                 <script type="application/json" id="rink-roster-data"><?= json_encode($rosterPayload, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) ?></script>
             <?php elseif ($activity === 'skills'): ?>

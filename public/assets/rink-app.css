@@ -45,7 +45,7 @@
 
 .rink-activity-grid {
     --rink-activity-grid-inset: 4px;
-    position: sticky;
+    position: static;
     z-index: 30;
     top: 8px;
     display: grid;
@@ -260,9 +260,16 @@
 .coach-rink-empty-state p { max-width: 310px; font-size: .82rem; line-height: 1.45; }
 
 .rink-roster-card { overflow: visible; border: 1px solid var(--slate-200); border-radius: 16px; background: #fff; box-shadow: 0 12px 32px rgba(38, 54, 78, .08); }
-.rink-roster-toolbar { display: flex; align-items: end; justify-content: flex-start; gap: 10px; padding: 12px 14px; }
+.rink-roster-toolbar { position: sticky; z-index: 20; top: 0; display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 320px); align-items: center; gap: 10px; padding: 12px 14px; border-radius: 15px 15px 0 0; background: #fff; box-shadow: 0 2px 4px rgba(38, 54, 78, .08); }
 .rink-roster-toolbar h2 { margin: 1px 0 0; font-size: 1.05rem; }
 .rink-roster-group-selector { flex: 0 0 auto; width: min(220px, 100%); }
+.rink-roster-name-filter { display: grid; min-width: 0; gap: 4px; }
+.rink-roster-name-filter .rink-assess-name-search input { height: 36px; padding-left: 27px; font-size: .8rem; }
+.rink-roster-name-filter .rink-assess-name-search > svg { top: 50%; left: 8px; width: 14px; height: 14px; transform: translateY(-50%); }
+.rink-roster-name-filter [data-rink-roster-name-clear] { position: absolute; top: 0; right: 0; width: 28px; height: 36px; padding: 0; border: 0; border-radius: 6px; color: var(--slate-600); background: transparent; font: inherit; font-size: 1.1rem; cursor: pointer; }
+.rink-roster-name-filter .rink-assess-name-search input:not(:placeholder-shown) { padding-right: 28px; }
+.rink-roster-name-filter [data-rink-roster-name-clear][hidden],
+.rink-roster-table.is-roster tr[hidden] { display: none; }
 .rink-report-selection-header,
 .rink-report-selection-cell { width: 42px; min-width: 42px; padding-inline: 0 !important; text-align: center; }
 .rink-report-selection-header input,
@@ -311,7 +318,7 @@
 .rink-report-cards-action-note:hover, .rink-report-cards-action-note:focus-visible { border-color: #7f5000; background: #ffe8a2; outline: none; transform: translateY(-1px); }
 .rink-report-cards-action:disabled { border-color: var(--slate-300); color: var(--slate-500); background: var(--slate-200); box-shadow: none; cursor: not-allowed; transform: none; }
 .rink-report-cards-action-generate:disabled { border-color: #bdd9d1; color: #66867d; background: #edf7f4; }
-.rink-report-cards-tab { position: absolute; z-index: 2; right: 95px; bottom: 100%; display: inline-flex; min-height: 34px; align-items: center; padding: 0 14px; border: 1px solid rgba(255, 255, 255, .5); border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--white); background: var(--navy-700); box-shadow: 0 -3px 10px rgba(7, 26, 58, .16); font: inherit; font-size: .72rem; font-weight: 850; cursor: pointer; pointer-events: auto; }
+.rink-report-cards-tab { position: absolute; z-index: 2; right: 170px; bottom: 100%; display: inline-flex; min-height: 34px; align-items: center; padding: 0 14px; border: 1px solid rgba(255, 255, 255, .5); border-bottom: 0; border-radius: 8px 8px 0 0; color: var(--white); background: var(--navy-700); box-shadow: 0 -3px 10px rgba(7, 26, 58, .16); font: inherit; font-size: .72rem; font-weight: 850; cursor: pointer; pointer-events: auto; }
 .rink-report-cards-tab:hover, .rink-report-cards-tab:focus-visible { background: var(--navy-800); outline: none; }
 .rink-note-library-list { display: grid; min-width: 0; flex: 1 1 180px; grid-auto-columns: 104px; grid-auto-flow: column; grid-template-rows: 32px; gap: 6px; overflow-x: auto; padding: 3px; scrollbar-width: thin; }
 .rink-note-library-actions { position: fixed; z-index: 56; display: flex; gap: 3px; filter: drop-shadow(0 2px 3px rgba(7, 26, 58, .14)); }
@@ -328,7 +335,10 @@
 .rink-note-library-oval:active { cursor: grabbing; }
 .rink-note-library-oval span { position: absolute; z-index: 0; inset: 2px 3px; display: grid; align-content: center; overflow: hidden; padding: 1px 8px; background: var(--blue-100); }
 .rink-note-library-oval:hover span, .rink-note-library-oval:focus-visible span { background: #cfe7ff; }
-.rink-table-scroll { overflow: auto; max-height: calc(100dvh - 320px); overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+/* The page owns vertical scrolling; this wrapper only scrolls wide tables sideways. */
+.rink-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* Ignore sideways drift in roster swipes while retaining vertical scroll and zoom. */
+.rink-roster-card .rink-table-scroll { touch-action: pan-y pinch-zoom; }
 .rink-roster-table {
     display: inline-table;
     width: max-content;
@@ -337,7 +347,7 @@
     border-spacing: 0;
     table-layout: auto;
 }
-.rink-roster-table th { position: sticky; z-index: 3; top: 0; height: 29px; padding: 0; border-bottom: 1px solid var(--slate-300); background: #f4f7fa; }
+.rink-roster-table th { position: relative; z-index: 3; height: 29px; padding: 0; border-bottom: 1px solid var(--slate-300); background: #f4f7fa; }
 .rink-roster-table th button { display: flex; width: 100%; height: 100%; align-items: center; justify-content: flex-start; gap: 2px; border: 0; background: none; padding: 0 8px; color: var(--slate-600); font: inherit; font-size: .62rem; font-weight: 850; letter-spacing: .05em; text-transform: uppercase; cursor: pointer; }
 .rink-roster-table th button span { color: var(--slate-400); }
 .rink-roster-table th[aria-sort="ascending"] button span,
@@ -526,7 +536,6 @@
     font-size: .57rem;
     letter-spacing: .06em;
 }
-.rink-assess-stage-button .badge-icon-mark { filter: brightness(0) invert(1); }
 .rink-assess-stage-button .badge-icon-number-disc { fill: #fff; stroke: #fff; }
 .rink-assess-stage-button .badge-icon-number { fill: var(--assess-stage-colour); }
 .rink-assess-stage-button.is-selected .rink-assess-stage-badge { color: var(--assess-stage-colour); filter: drop-shadow(0 0 1px #fff); }
@@ -620,18 +629,32 @@
 .rink-assess-roster-card {
     position: relative;
     margin-top: 12px;
-    overflow: hidden;
+    overflow: visible;
     border: 1px solid var(--slate-200);
     border-radius: 16px;
     background: #fff;
     box-shadow: 0 12px 32px rgba(38, 54, 78, .08);
 }
+.rink-assess-sticky-header { position: sticky; z-index: 20; top: 0; background: #f4f7fa; }
+.rink-assess-sticky-header[hidden] { display: none; }
+.rink-assess-header-scroll { overflow-x: auto; border-radius: 15px 15px 0 0; scrollbar-width: none; }
+.rink-assess-header-scroll::-webkit-scrollbar { display: none; }
+.rink-assess-header-scroll .rink-assess-table { display: table; }
+.rink-assess-sticky-header .rink-assess-header-scroll .rink-assess-category-menu { position: fixed; right: auto; transform: none; }
 .rink-chat-labels { display: grid; gap: 1px; text-align: left; }
 .rink-activity-grid.is-workspace .rink-chat-labels { display: contents; }
 .rink-activity-grid.is-workspace .rink-chat-labels strong { font-size: .9rem; }
 .rink-activity-grid.is-workspace .rink-chat-labels small { font-size: .62rem; }
 .rink-chat-unread { position: absolute; z-index: 1; top: -5px; right: -5px; display: inline-grid; min-width: 18px; height: 18px; box-sizing: border-box; place-items: center; padding: 0 3px; border: 2px solid #fff; border-radius: 999px; background: #d33732; color: #fff; font-size: .55rem; font-weight: 900; line-height: 1; }
 .rink-chat-unread[hidden] { display: none; }
+.rink-floating-chat-alert { position: fixed; z-index: 58; bottom: 0; right: 0; display: flex; max-width: calc(100vw - 24px); align-items: center; gap: 8px; padding: 11px 12px; border: 1px solid #a52723; border-right: 0; border-radius: 12px 0 0 12px; background: #b4232b; color: #fff; box-shadow: 0 4px 18px rgba(38, 54, 78, .24); font: inherit; text-align: left; cursor: pointer; }
+.rink-floating-chat-alert[hidden] { display: none; }
+.rink-floating-chat-alert:hover { background: #951c23; }
+.rink-floating-chat-alert:focus-visible { outline: 2px solid #fff; outline-offset: -4px; }
+.rink-floating-chat-alert > svg { width: 24px; height: 24px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 3.1; stroke-linecap: round; stroke-linejoin: round; }
+.rink-floating-chat-alert > span { display: grid; gap: 2px; }
+.rink-floating-chat-alert strong { font-size: .76rem; }
+.rink-floating-chat-alert small { color: rgba(255, 255, 255, .9); font-size: .66rem; }
 .rink-chat-unread.is-alerting { animation: rink-chat-unread-pulse .55s ease-in-out 3; }
 @keyframes rink-chat-unread-pulse {
     0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(211, 55, 50, 0); }
@@ -640,11 +663,11 @@
 @media (prefers-reduced-motion: reduce) {
     .rink-chat-unread.is-alerting { animation: none; }
 }
-.rink-chat-card { display: grid; width: 100%; min-width: 0; height: min(620px, calc(100dvh - 250px)); min-height: 330px; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; border: 1px solid var(--slate-200); border-radius: 16px; background: #fff; box-shadow: 0 12px 32px rgba(38, 54, 78, .08); }
+.rink-chat-card { display: grid; width: 100%; min-width: 0; min-height: 330px; grid-template-rows: auto auto auto; overflow: hidden; border: 1px solid var(--slate-200); border-radius: 16px; background: #fff; box-shadow: 0 12px 32px rgba(38, 54, 78, .08); }
 .rink-chat-card > header { display: flex; align-items: end; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--slate-200); }
 .rink-chat-card h2 { margin: 2px 0 0; font-size: 1.1rem; }
 .rink-chat-card > header small { color: var(--slate-500); font-size: .68rem; }
-.rink-chat-history { overflow: auto; padding: 14px; background: #f7f9fc; }
+.rink-chat-history { padding: 14px; background: #f7f9fc; }
 .rink-chat-message-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
 .rink-chat-message-row.is-mine { justify-content: flex-end; }
 .rink-chat-message { position: relative; max-width: min(720px, 82%); margin: 0; padding: 9px 12px; border: 0; border-radius: 20px 20px 20px 5px; background: var(--rink-chat-bubble-colour, #e9e9eb); color: #1c1c1e; box-shadow: 0 1px 1px rgba(28, 28, 30, .08); }
@@ -669,19 +692,6 @@
 .rink-chat-actions button[data-rink-chat-delete] { color: #b52f35; }
 .rink-chat-actions svg { width: 24px; height: 24px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .rink-chat-compose { display: grid; grid-template-columns: minmax(0, 1fr) 68px; min-width: 0; gap: 8px; width: 100%; box-sizing: border-box; padding: 10px 12px; border-top: 1px solid var(--slate-200); background: #fff; }
-.rink-activity-page-chat .rink-chat-compose {
-    position: fixed;
-    right: clamp(10px, 2.5vw, 34px);
-    bottom: 0;
-    left: clamp(10px, 2.5vw, 34px);
-    z-index: 30;
-    width: auto;
-    border: 1px solid var(--slate-200);
-    border-bottom: 0;
-    border-radius: 14px 14px 0 0;
-    box-shadow: 0 -8px 24px rgba(38, 54, 78, .12);
-}
-.rink-activity-page-chat .rink-chat-history { padding-bottom: 172px; }
 .rink-chat-compose textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 34px; height: 34px; max-height: 112px; resize: none; overflow-y: hidden; border: 1px solid var(--slate-300); border-radius: 9px; padding: 8px; font: inherit; font-size: .78rem; line-height: 1.35; }
 .rink-chat-post-actions { position: relative; display: block; width: 68px; align-self: end; }
 .rink-chat-post-status { position: absolute; right: 0; bottom: calc(100% + 5px); width: 68px; color: #b4232b; font-size: .65rem; font-weight: 800; line-height: 1; text-align: center; }
@@ -765,6 +775,18 @@
 }
 .rink-assess-empty h3 { margin: 0; }
 .rink-assess-empty p { margin: 3px 0 0; color: var(--slate-500); }
+.rink-assess-name-controls { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; gap: 2px; box-sizing: border-box; width: 100%; height: 38px; padding: 1px 5px; }
+.rink-assess-name-search { position: relative; min-width: 0; }
+.rink-assess-name-search > svg { position: absolute; top: 50%; left: 5px; width: 13px; height: 13px; transform: translateY(-50%); fill: none; stroke: var(--slate-500); stroke-width: 1.7; pointer-events: none; }
+.rink-assess-name-search input { display: block; box-sizing: border-box; width: 100%; min-width: 0; height: 36px; border: 1px solid var(--slate-300); border-radius: 6px; padding: 3px 5px 3px 21px; background: #fff; color: var(--slate-800); font: inherit; font-size: .7rem; letter-spacing: normal; }
+.rink-assess-name-search input:not(:placeholder-shown) { padding-right: 23px; }
+.rink-assess-name-search input::placeholder { color: var(--slate-500); opacity: 1; }
+.rink-assess-name-search input:focus-visible { outline: 2px solid var(--blue-600); outline-offset: -1px; }
+.rink-assess-table th .rink-assess-name-controls button { width: 24px; height: 36px; min-height: 36px; justify-content: center; padding: 0; font-size: .9rem; }
+.rink-assess-table th [data-rink-assess-name-clear] { position: absolute; top: 0; right: 0; }
+.rink-assess-table th [data-rink-assess-name-clear][hidden],
+.rink-assess-table tr[hidden] { display: none; }
+.rink-assess-table [data-rink-assess-name-empty] td { color: var(--slate-500); font-size: .8rem; text-align: center; }
 .rink-assess-table th:nth-child(1),
 .rink-assess-table td:nth-child(1) { width: 56px; min-width: 56px; }
 .rink-assess-table th:nth-child(2),
@@ -827,6 +849,7 @@
     height: 29px;
 }
 .rink-assess-table thead th {
+    z-index: 6;
     height: 29px;
     vertical-align: bottom;
     background: #f4f7fa;
@@ -878,8 +901,8 @@
     display: block;
     width: 84px;
     margin: 6px auto;
-    color: var(--slate-600);
-    font-size: .58rem;
+    color: var(--slate-800);
+    font-size: calc(.58rem + 1pt);
     font-weight: 800;
     letter-spacing: .03em;
     line-height: 1.15;
@@ -1103,12 +1126,10 @@
     .rink-roster-toolbar { padding: 7px 8px; }
     .rink-roster-toolbar .eyebrow { display: none; }
     .rink-roster-toolbar h2 { font-size: .86rem; }
-    .rink-roster-toolbar { grid-template-columns: minmax(0, 1fr); }
-    .rink-roster-toolbar { align-items: stretch; flex-direction: column; }
+    .rink-roster-toolbar { grid-template-columns: minmax(100px, .8fr) minmax(0, 1fr); gap: 8px; }
     .rink-roster-group-selector { width: 100%; }
     .rink-roster-toolbar select { min-height: 34px; font-size: .7rem; }
     .rink-roster-table { min-width: 600px; }
-    .rink-table-scroll { max-height: calc(100dvh - 245px); }
     .rink-roster-table { min-width: 360px; }
     .rink-roster-table th:nth-child(2) { width: 60px; }
     .rink-roster-table th:nth-child(3) { width: 43px; }
@@ -1134,7 +1155,6 @@
     .rink-assess-stage-label { display: block; font-size: .58rem; }
     .rink-assess-ribbon-row { grid-template-columns: 1fr; gap: 6px; }
     .rink-assess-ribbon-button { min-height: 40px; }
-    .rink-assess-roster-card .rink-table-scroll { max-height: calc(100dvh - 305px); }
     .rink-assess-table { min-width: 520px; }
     .rink-assess-table th:nth-child(2),
     .rink-assess-table td:nth-child(2) { width: 126px; min-width: 126px; }
@@ -1147,7 +1167,7 @@
     .rink-assess-skill-cell { width: 90px; min-width: 90px; }
     .rink-assess-skill-header span {
         width: 84px;
-        font-size: .52rem;
+        font-size: calc(.52rem + 1pt);
     }
     .rink-detail-dialog { padding: 17px; }
     .rink-profile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1166,7 +1186,6 @@
     .rink-bar-group-selector summary { min-height: 45px; }
     .rink-assess-stage-button { min-height: 45px; }
     .rink-roster-toolbar { padding-block: 5px; }
-    .rink-table-scroll { max-height: calc(100dvh - 183px); }
 }
 .rink-report-cards-action-generate { border-color: var(--green-600); background: var(--green-600); box-shadow: 0 2px 5px rgba(8, 119, 94, .18); }
 .rink-report-cards-action-generate:hover, .rink-report-cards-action-generate:focus-visible { border-color: var(--green-700); background: var(--green-700); box-shadow: 0 3px 8px rgba(8, 119, 94, .25); }

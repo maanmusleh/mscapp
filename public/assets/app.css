@@ -2124,7 +2124,6 @@ tbody .sticky-name small {
     dominant-baseline: central;
 }
 
-.badge-icon-mark { filter: brightness(0) invert(1); }
 .badge-icon-mark-outline { fill: transparent; }
 .badge-icon-fill, .badge-icon-outline { fill: currentColor; }
 .badge-icon-number-disc { fill: var(--white); stroke: var(--white); }
@@ -3373,14 +3372,20 @@ tbody .sticky-last-name small {
     font-size: .96rem;
 }
 
+.audit-details {
+    border: 1px solid var(--slate-200);
+    border-radius: var(--radius-md);
+    background: var(--white);
+}
+
 .audit-summary {
     display: grid;
     grid-template-columns: 1fr auto auto;
     align-items: center;
     gap: 9px;
     padding: 12px 13px;
-    border: 1px solid var(--slate-200);
-    border-radius: var(--radius-md);
+    border: 0;
+    border-radius: inherit;
     cursor: pointer;
     background: #f8fbff;
     list-style: none;
@@ -3396,8 +3401,12 @@ tbody .sticky-last-name small {
 }
 
 .audit-summary:hover {
-    border-color: #b8d8f8;
     background: var(--blue-50);
+}
+
+.audit-details[open] > .audit-summary {
+    border-bottom: 1px solid var(--slate-200);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
 }
 
 .audit-summary:focus-visible {
@@ -3427,7 +3436,7 @@ tbody .sticky-last-name small {
 }
 
 .audit-details-content {
-    margin-top: 11px;
+    padding: 13px;
 }
 
 .achievement-editor-content {
@@ -3756,6 +3765,61 @@ tbody .sticky-last-name small {
     border: 1px solid var(--slate-200);
     border-radius: var(--radius-md);
     background: var(--white);
+}
+
+.attendance-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+[data-registration-season][hidden],
+[data-registration-season-empty][hidden] {
+    display: none;
+}
+
+.attendance-filters label {
+    display: grid;
+    flex: 1 1 160px;
+    gap: 5px;
+    min-width: 0;
+    font-size: .72rem;
+    font-weight: 700;
+}
+
+.attendance-filters select {
+    width: 100%;
+    min-width: 0;
+}
+
+.attendance-records-heading {
+    margin: 20px 0 12px;
+    font-size: .82rem;
+}
+
+.attendance-records-copy {
+    color: var(--slate-500);
+    font-size: .72rem;
+}
+
+.attendance-summary-row small {
+    display: block;
+    color: var(--slate-500);
+    margin-block: 3px;
+}
+
+.attendance-check {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.attendance-check input {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--green-700);
 }
 
 .attendance-summary-row {
