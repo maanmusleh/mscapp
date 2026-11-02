@@ -15,21 +15,22 @@ final class SkaterAttendanceService
     {
         $sessions = $this->pdo->prepare(
             'SELECT DISTINCT ps.id AS session_id, ps.name AS session_name,
-                se.id AS season_id, se.name AS season_name, se.start_date, se.end_date
+                se.id AS season_id, se.name AS season_name, se.start_date, se.end_date,
+                COALESCE(se.display_order, 2147483647), COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time
              FROM skater_enrollment e
              INNER JOIN skater s ON s.id = e.skater_id
              INNER JOIN program_session ps ON ps.id = e.program_session_id AND ps.club_id = s.club_id
              INNER JOIN season se ON se.id = ps.season_id AND se.club_id = s.club_id AND se.active = 1
              WHERE s.club_id = :club_id AND s.public_id = :public_id AND s.deleted_at IS NULL
                AND e.deleted_at IS NULL AND ps.deleted_at IS NULL AND se.deleted_at IS NULL
-             ORDER BY se.start_date DESC, se.id DESC, ps.name, ps.id'
+             ORDER BY COALESCE(se.display_order, 2147483647), se.start_date DESC, se.id DESC, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id'
         );
         $sessions->execute(['club_id' => $clubId, 'public_id' => $publicId]);
         $sessions = $sessions->fetchAll();
         $seasonOptions = $this->pdo->prepare(
             'SELECT id, name, start_date, end_date FROM season
              WHERE club_id = :club_id AND active = 1 AND deleted_at IS NULL
-             ORDER BY start_date DESC, id DESC'
+             ORDER BY COALESCE(display_order, 2147483647), start_date DESC, id DESC'
         );
         $seasonOptions->execute(['club_id' => $clubId]);
         $seasons = $seasonOptions->fetchAll();
@@ -44,13 +45,20 @@ final class SkaterAttendanceService
         )->format('Y-m-d');
         $defaultSeasonId = null;
         $latestRegisteredSeasonId = null;
+        $latestStartDate = '';
+        $currentStartDate = '';
         $summary = [];
         foreach ($sessions as $session) {
             $seasonId = (int) $session['season_id'];
             $sessionId = (int) $session['session_id'];
-            if ($latestRegisteredSeasonId === null) $latestRegisteredSeasonId = $seasonId;
-            if ($defaultSeasonId === null && $session['start_date'] <= $today && $session['end_date'] >= $today) {
+            // Default selection follows dates independently of the admin's menu order.
+            if ($session['start_date'] > $latestStartDate) {
+                $latestRegisteredSeasonId = $seasonId;
+                $latestStartDate = $session['start_date'];
+            }
+            if ($session['start_date'] > $currentStartDate && $session['start_date'] <= $today && $session['end_date'] >= $today) {
                 $defaultSeasonId = $seasonId;
+                $currentStartDate = $session['start_date'];
             }
             $summary[$sessionId] = [
                 'session_id' => $sessionId, 'session_name' => $session['session_name'],

@@ -15,7 +15,7 @@ final class ScheduleAdminService
     public function data(int $clubId, ?int $selectedSeasonId = null): array
     {
         $statuses = $this->pdo->query('SELECT id, name FROM season_status WHERE active = 1 ORDER BY display_order, name')->fetchAll();
-        $seasons = $this->pdo->prepare('SELECT id, name, NULL AS season_year, NULL AS season_term_id, season_status_id, start_date, end_date, active, updated_at FROM season WHERE club_id = :club_id AND deleted_at IS NULL ORDER BY CASE WHEN end_date >= CURDATE() THEN 0 ELSE 1 END, CASE WHEN end_date >= CURDATE() THEN start_date END DESC, CASE WHEN end_date < CURDATE() THEN end_date END DESC, name');
+        $seasons = $this->pdo->prepare('SELECT id, name, NULL AS season_year, NULL AS season_term_id, season_status_id, start_date, end_date, active, updated_at FROM season WHERE club_id = :club_id AND deleted_at IS NULL ORDER BY COALESCE(display_order, 2147483647), start_date DESC, id DESC');
         $seasons->execute(['club_id' => $clubId]);
         $managedSeasons = $seasons->fetchAll();
         $activeSeasons = array_values(array_filter($managedSeasons, static fn (array $season): bool => (int) $season['active'] === 1));
@@ -25,7 +25,7 @@ final class ScheduleAdminService
             $sessionSql .= ' AND ps.season_id = :season_id';
             $sessionParams['season_id'] = $selectedSeasonId;
         }
-        $sessions = $this->pdo->prepare($sessionSql . ' ORDER BY ps.day_of_week, ps.start_time, se.start_date DESC, ps.name');
+        $sessions = $this->pdo->prepare($sessionSql . ' ORDER BY COALESCE(se.display_order, 2147483647), se.start_date DESC, se.id DESC, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id');
         $sessions->execute($sessionParams);
         $users = $this->pdo->query(
             'SELECT id, first_name, last_name
@@ -224,6 +224,77 @@ final class ScheduleAdminService
         }
     }
 
+    /** Save a complete order, rejecting stale lists and IDs outside this club/season. */
+    public function saveOrder(int $clubId, int $userId, string $resource, array $order, array $expected, ?int $seasonId = null): void
+    {
+        if (!in_array($resource, ['rinks', 'seasons', 'sessions'], true)
+            || $order !== array_values($order) || $expected !== array_values($expected)) {
+            throw new InvalidArgumentException('Choose a valid registration list.');
+        }
+        foreach (array_merge($order, $expected) as $item) {
+            if (!is_string($item) || ($resource !== 'rinks' && preg_match('/^[1-9][0-9]*$/D', $item) !== 1)) {
+                throw new InvalidArgumentException('Choose valid items to reorder.');
+            }
+        }
+        if (count(array_unique($order, SORT_STRING)) !== count($order)) {
+            throw new InvalidArgumentException('Each item must appear exactly once.');
+        }
+        $this->pdo->beginTransaction();
+        try {
+            $this->lockClub($clubId);
+            if ($resource === 'rinks') {
+                $current = $this->rinks($clubId);
+            } else {
+                $table = $resource === 'seasons' ? 'season' : 'program_session';
+                $where = 'club_id = :club_id AND deleted_at IS NULL';
+                $params = ['club_id' => $clubId];
+                $sort = 'COALESCE(display_order, 2147483647), start_date DESC, id DESC';
+                if ($resource === 'sessions') {
+                    if ($seasonId === null || !$this->seasonBelongsToClub($seasonId, $clubId)) {
+                        throw new InvalidArgumentException('Choose an active season for these sessions.');
+                    }
+                    $where .= ' AND season_id = :season_id';
+                    $params['season_id'] = $seasonId;
+                    $sort = 'COALESCE(display_order, 2147483647), day_of_week, start_time, name, id';
+                }
+                $statement = $this->pdo->prepare("SELECT id FROM {$table} WHERE {$where} ORDER BY {$sort} FOR UPDATE");
+                $statement->execute($params);
+                $current = array_map('strval', $statement->fetchAll(PDO::FETCH_COLUMN));
+            }
+            if ($expected !== $current) {
+                throw new InvalidArgumentException('This list changed in another window. Refresh the page before reordering.');
+            }
+            $members = $order;
+            $currentMembers = $current;
+            sort($members, SORT_STRING);
+            sort($currentMembers, SORT_STRING);
+            if ($members !== $currentMembers) {
+                throw new InvalidArgumentException('The order must contain every item in this list exactly once.');
+            }
+            if ($resource === 'rinks') {
+                $this->saveRinks($clubId, $userId, $order);
+            } else {
+                // Order has its own optimistic version (the expected list). Keep content
+                // timestamps unchanged so dragging cannot invalidate or authorize a form edit.
+                $update = $this->pdo->prepare("UPDATE {$table} SET display_order = :position, updated_at = updated_at WHERE id = :id AND {$where}");
+                foreach ($order as $position => $id) {
+                    $update->execute(['position' => $position, 'id' => $id] + $params);
+                }
+            }
+            $this->pdo->commit();
+        } catch (Throwable $exception) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            throw $exception;
+        }
+    }
+
+    private function lockClub(int $clubId): void
+    {
+        $statement = $this->pdo->prepare('SELECT id FROM club WHERE id = :id FOR UPDATE');
+        $statement->execute(['id' => $clubId]);
+        if ($statement->fetchColumn() === false) throw new InvalidArgumentException('Choose a valid club.');
+    }
+
     public function rinks(int $clubId): array
     {
         $statement = $this->pdo->prepare('SELECT setting_value FROM application_setting WHERE club_id = :club_id AND setting_key = :key');
@@ -242,14 +313,15 @@ final class ScheduleAdminService
     {
         $original = trim((string) ($input['original_name'] ?? ''));
         $name = $this->text($input['name'] ?? null, 160, 'Rink name');
-        $rinks = $this->rinks($clubId);
-        $found = false;
-        foreach ($rinks as &$rink) { if (strcasecmp($rink, $original) === 0) { $rink = $name; $found = true; break; } }
-        unset($rink);
-        if ($original === '') $rinks[] = $name; elseif (!$found) throw new InvalidArgumentException('That rink is no longer available.');
-        if (count(array_unique(array_map('strtolower', $rinks))) !== count($rinks)) throw new InvalidArgumentException('Each rink needs a unique name.');
         $this->pdo->beginTransaction();
         try {
+            $this->lockClub($clubId);
+            $rinks = $this->rinks($clubId);
+            $found = false;
+            foreach ($rinks as &$rink) { if (strcasecmp($rink, $original) === 0) { $rink = $name; $found = true; break; } }
+            unset($rink);
+            if ($original === '') $rinks[] = $name; elseif (!$found) throw new InvalidArgumentException('That rink is no longer available.');
+            if (count(array_unique(array_map('strtolower', $rinks))) !== count($rinks)) throw new InvalidArgumentException('Each rink needs a unique name.');
             if ($original !== '') $this->pdo->prepare('UPDATE program_session SET location = :name, updated_by_user_id = :user_id WHERE club_id = :club_id AND location = :original AND deleted_at IS NULL')->execute(['name' => $name, 'user_id' => $userId, 'club_id' => $clubId, 'original' => $original]);
             $this->saveRinks($clubId, $userId, $rinks);
             $this->pdo->commit();
@@ -259,9 +331,18 @@ final class ScheduleAdminService
     public function removeRink(int $clubId, int $userId, $name): void
     {
         $name = trim((string) $name);
-        $inUse = $this->pdo->prepare('SELECT COUNT(*) FROM program_session WHERE club_id = :club_id AND location = :name AND deleted_at IS NULL'); $inUse->execute(['club_id' => $clubId, 'name' => $name]);
-        if ((int) $inUse->fetchColumn() > 0) throw new InvalidArgumentException('This rink is used by one or more sessions and cannot be removed.');
-        $this->saveRinks($clubId, $userId, array_values(array_filter($this->rinks($clubId), static fn(string $rink): bool => strcasecmp($rink, $name) !== 0)));
+        $this->pdo->beginTransaction();
+        try {
+            $this->lockClub($clubId);
+            $inUse = $this->pdo->prepare('SELECT COUNT(*) FROM program_session WHERE club_id = :club_id AND location = :name AND deleted_at IS NULL');
+            $inUse->execute(['club_id' => $clubId, 'name' => $name]);
+            if ((int) $inUse->fetchColumn() > 0) throw new InvalidArgumentException('This rink is used by one or more sessions and cannot be removed.');
+            $this->saveRinks($clubId, $userId, array_values(array_filter($this->rinks($clubId), static fn(string $rink): bool => strcasecmp($rink, $name) !== 0)));
+            $this->pdo->commit();
+        } catch (Throwable $exception) {
+            if ($this->pdo->inTransaction()) $this->pdo->rollBack();
+            throw $exception;
+        }
     }
 
     private function saveRinks(int $clubId, int $userId, array $rinks): void { $sql = 'INSERT INTO application_setting (club_id, setting_key, setting_value, value_type, description, created_by_user_id, updated_by_user_id) VALUES (:club_id, :key, :value, "json", :description, :created_by, :updated_by) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by_user_id = VALUES(updated_by_user_id)'; $this->pdo->prepare($sql)->execute(['club_id' => $clubId, 'key' => self::RINKS_KEY, 'value' => json_encode($rinks, JSON_THROW_ON_ERROR), 'description' => 'Administrator-managed rink names.', 'created_by' => $userId, 'updated_by' => $userId]); }

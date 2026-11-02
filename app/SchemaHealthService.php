@@ -54,6 +54,8 @@ final class SchemaHealthService
         '1.2.22' => 'Active skater identity uniqueness and stale schedule-write protection',
         '1.2.23' => 'Stale skater-profile-write protection',
         '1.2.24' => 'Colour-group report-card coach assignments',
+        '1.2.25' => 'Persistent registration display order',
+        '1.2.26' => 'Shared rink and session schedules',
     ];
 
     /** @var array<string, array<string, string[]>> */
@@ -72,6 +74,7 @@ final class SchemaHealthService
         '1.2.18' => ['program_session' => ['report_card_coach_user_id']],
         '1.2.22' => ['skater' => ['active_identity_marker']],
         '1.2.24' => ['program_group' => ['report_card_coach_user_id']],
+        '1.2.25' => ['season' => ['display_order'], 'program_session' => ['display_order']],
     ];
 
     /** @var array<string, array<string, string[]>> */
@@ -86,6 +89,7 @@ final class SchemaHealthService
         ]],
         '1.2.22' => ['skater' => ['uq_skater_active_identity']],
         '1.2.24' => ['program_group' => ['idx_program_group_report_card_coach']],
+        '1.2.26' => ['program_session' => ['idx_program_session_schedule']],
     ];
 
     /** @var array<string, string> */
@@ -109,6 +113,8 @@ final class SchemaHealthService
         '1.2.22' => 'migrations/1.2.22_harden_skater_identity_and_schedule_writes.sql',
         '1.2.23' => 'migrations/1.2.23_prevent_stale_skater_profile_writes.sql',
         '1.2.24' => 'migrations/1.2.24_add_group_report_card_coaches.sql',
+        '1.2.25' => 'migrations/1.2.25_add_registration_display_order.sql',
+        '1.2.26' => 'migrations/1.2.26_allow_shared_session_schedules.sql',
     ];
 
     private PDO $pdo;

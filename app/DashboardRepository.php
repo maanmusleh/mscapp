@@ -428,11 +428,7 @@ final class DashboardRepository
                AND e.deleted_at IS NULL
                AND se.id = ?
              ORDER BY
-                e.skater_id,
-                ps.day_of_week,
-                ps.start_time,
-                se.start_date,
-                ps.name"
+                e.skater_id, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id"
         );
         $groups->execute([...$ids, $seasonId]);
         $groupMap = [];
@@ -480,7 +476,7 @@ final class DashboardRepository
                AND e.active = 1
                AND e.deleted_at IS NULL
                AND se.id = ?
-             ORDER BY e.skater_id, ps.day_of_week, ps.start_time, ps.name"
+             ORDER BY e.skater_id, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id"
         );
         $filterRegistrations->execute([...$ids, $seasonId]);
         $filterRegistrationMap = [];
@@ -520,7 +516,7 @@ final class DashboardRepository
              WHERE se.club_id = :club_id
                AND se.active = 1
                AND se.deleted_at IS NULL
-             ORDER BY
+             ORDER BY COALESCE(se.display_order, 2147483647),
                 CASE
                     WHEN CURDATE() BETWEEN se.start_date AND se.end_date THEN 0
                     WHEN se.start_date > CURDATE() THEN 1
@@ -528,8 +524,7 @@ final class DashboardRepository
                 END,
                 CASE WHEN se.start_date > CURDATE() THEN se.start_date END,
                 CASE WHEN se.end_date < CURDATE() THEN se.end_date END DESC,
-                se.start_date,
-                se.name'
+                se.start_date, se.name, se.id'
         );
         $seasons->execute(['club_id' => $clubId]);
 
@@ -565,7 +560,7 @@ final class DashboardRepository
              WHERE ps.club_id = :session_club_id
                AND ps.active = 1
                AND ps.deleted_at IS NULL
-             ORDER BY ps.day_of_week, ps.start_time, se.start_date, ps.name'
+             ORDER BY COALESCE(se.display_order, 2147483647), se.start_date DESC, se.id DESC, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id'
         );
         $sessions->execute([
             'season_club_id' => $clubId,
@@ -618,7 +613,7 @@ final class DashboardRepository
                 AND se.deleted_at IS NULL
              WHERE pg.active = 1
                AND pg.deleted_at IS NULL
-             ORDER BY ps.day_of_week, ps.start_time, se.start_date, ps.name, pg.display_order, pg.name'
+             ORDER BY COALESCE(se.display_order, 2147483647), se.start_date DESC, se.id DESC, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id, pg.display_order, pg.name'
         );
         $groups->execute([
             'session_club_id' => $clubId,
@@ -797,7 +792,7 @@ final class DashboardRepository
              WHERE s.club_id = :club_id
                AND s.public_id = :public_id
                AND e.deleted_at IS NULL
-             ORDER BY se.start_date DESC, ps.day_of_week, ps.start_time'
+             ORDER BY COALESCE(se.display_order, 2147483647), se.start_date DESC, se.id DESC, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id'
         );
         $enrollmentStatement->execute([
             'club_id' => $clubId,
@@ -825,7 +820,7 @@ final class DashboardRepository
              WHERE ps.club_id = :club_id
                AND ps.active = 1
                AND ps.deleted_at IS NULL
-             ORDER BY se.start_date DESC, ps.day_of_week, ps.start_time, pg.display_order, pg.name'
+             ORDER BY COALESCE(se.display_order, 2147483647), se.start_date DESC, se.id DESC, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id, pg.display_order, pg.name'
         );
         $sessionOptionsStatement->execute(['club_id' => $clubId]);
         $registrationOptions = [];

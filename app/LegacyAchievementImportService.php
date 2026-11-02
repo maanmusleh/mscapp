@@ -30,10 +30,7 @@ final class LegacyAchievementImportService
             'SELECT id, name, start_date, end_date, active
              FROM season
              WHERE club_id = :club_id AND active = 1 AND deleted_at IS NULL
-             ORDER BY CASE WHEN end_date >= CURDATE() THEN 0 ELSE 1 END,
-                      CASE WHEN end_date >= CURDATE() THEN start_date END DESC,
-                      CASE WHEN end_date < CURDATE() THEN end_date END DESC,
-                      name'
+             ORDER BY COALESCE(display_order, 2147483647), start_date DESC, id DESC'
         );
         $statement->execute(['club_id' => $clubId]);
         return $statement->fetchAll();

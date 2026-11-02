@@ -1026,6 +1026,24 @@ try {
         json_response(['message' => 'Achievements updated.']);
     }
 
+    if ($method === 'POST' && $requestPath === '/api/schedule/order') {
+        $user = Auth::requireRole(['ADMINISTRATOR']);
+        $input = request_json();
+        $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null;
+        if (!csrf_is_valid(is_string($token) ? $token : null)) {
+            json_response(['error' => 'Your session expired. Refresh and try again.'], 419);
+        }
+        if (!is_string($input['resource'] ?? null) || !is_array($input['order'] ?? null) || !is_array($input['expected'] ?? null)) {
+            throw new InvalidArgumentException('Choose a valid registration order.');
+        }
+        $seasonId = filter_var($input['season_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        (new ScheduleAdminService(Database::connection()))->saveOrder(
+            (int) $user['club_id'], (int) $user['id'], $input['resource'],
+            $input['order'], $input['expected'], $seasonId === false ? null : $seasonId
+        );
+        json_response(['message' => 'Order saved.']);
+    }
+
     if ($method === 'GET' && $requestPath === '/sessions') {
         $user = Auth::requireRole(['ADMINISTRATOR', 'REGISTRAR']);
         $scheduleAdmin = new ScheduleAdminService(Database::connection());

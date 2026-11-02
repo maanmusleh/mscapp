@@ -18,11 +18,7 @@ final class AchievementExportService
             'SELECT id, name, start_date, end_date
              FROM season
              WHERE club_id = :club_id AND active = 1 AND deleted_at IS NULL
-             ORDER BY
-                CASE WHEN end_date >= CURDATE() THEN 0 ELSE 1 END,
-                CASE WHEN end_date >= CURDATE() THEN start_date END DESC,
-                CASE WHEN end_date < CURDATE() THEN end_date END DESC,
-                name'
+             ORDER BY COALESCE(display_order, 2147483647), start_date DESC, id DESC'
         );
         $seasons->execute(['club_id' => $clubId]);
 
@@ -32,7 +28,7 @@ final class AchievementExportService
              INNER JOIN season se ON se.id = ps.season_id AND se.club_id = ps.club_id
                 AND se.active = 1 AND se.deleted_at IS NULL
              WHERE ps.club_id = :club_id AND ps.active = 1 AND ps.deleted_at IS NULL
-             ORDER BY ps.season_id, ps.day_of_week, ps.start_time, ps.name'
+             ORDER BY COALESCE(se.display_order, 2147483647), se.start_date DESC, se.id DESC, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id'
         );
         $sessions->execute(['club_id' => $clubId]);
 
@@ -47,7 +43,7 @@ final class AchievementExportService
              INNER JOIN season se ON se.id = ps.season_id AND se.club_id = ps.club_id
                 AND se.active = 1 AND se.deleted_at IS NULL
              WHERE pg.active = 1 AND pg.deleted_at IS NULL
-             ORDER BY ps.season_id, ps.day_of_week, ps.start_time, ps.name, pg.display_order, pg.name'
+             ORDER BY COALESCE(se.display_order, 2147483647), se.start_date DESC, se.id DESC, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id, pg.display_order, pg.name'
         );
         $groups->execute(['club_id' => $clubId]);
 
@@ -179,7 +175,7 @@ final class AchievementExportService
              FROM program_session ps
              LEFT JOIN season s ON s.id = ps.season_id
              WHERE ' . $where . '
-             ORDER BY s.start_date, s.name, ps.day_of_week, ps.start_time, ps.name'
+             ORDER BY COALESCE(s.display_order, 2147483647), s.start_date DESC, s.id DESC, COALESCE(ps.display_order, 2147483647), ps.day_of_week, ps.start_time, ps.name, ps.id'
         );
         $statement->execute($parameters);
         $headers = ['Season', 'SKU', 'Session name', 'Day', 'Start time', 'End time', 'Rink'];

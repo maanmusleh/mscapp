@@ -31,6 +31,19 @@ foreach ($sessionGroups as $sessionId => $groups) {
             static fn (array $group): bool => (int) ($group['report_card_coach_user_id'] ?? 0) > 0
         )) === count($populatedSessionGroups[$sessionId]);
 }
+$canReorder = $user['role_code'] === 'ADMINISTRATOR';
+$renderOrderHelp = static function (string $resource) use ($canReorder): void {
+    if (!$canReorder) return;
+    ?>
+    <div class="schedule-order-help"><span id="order-help-<?= e($resource) ?>">Drag to reorder · Auto-saved. Click a handle for move controls, or use ↑ / ↓. Escape cancels a drag.</span><span data-order-status="<?= e($resource) ?>" role="status" aria-live="polite"></span></div>
+    <?php
+};
+$renderOrderHandle = static function (string $resource, string $name) use ($canReorder): void {
+    if (!$canReorder) return;
+    ?>
+    <button class="schedule-order-handle" type="button" data-order-handle aria-label="<?= e('Reorder ' . $name) ?>" aria-describedby="order-help-<?= e($resource) ?>" title="Drag to reorder; use arrow keys to move"><svg viewBox="0 0 16 24" aria-hidden="true"><g fill="currentColor"><circle cx="5" cy="6" r="1.5"/><circle cx="11" cy="6" r="1.5"/><circle cx="5" cy="12" r="1.5"/><circle cx="11" cy="12" r="1.5"/><circle cx="5" cy="18" r="1.5"/><circle cx="11" cy="18" r="1.5"/></g></svg></button>
+    <?php
+};
 ?>
 <!doctype html>
 <html lang="en">
@@ -79,8 +92,11 @@ foreach ($sessionGroups as $sessionId => $groups) {
                 <summary><span class="audit-toggle" aria-hidden="true"></span><strong id="seasons-heading">Seasons</strong></summary>
                 <div class="schedule-admin-grid">
                 <section class="schedule-admin-card">
+                    <?php $renderOrderHelp('seasons'); ?>
+                    <div class="schedule-order-list<?= $canReorder ? ' has-ordering' : '' ?>" <?= $canReorder ? 'data-order-list="seasons"' : '' ?> data-order-url="<?= e(url('api/schedule/order')) ?>" data-order-token="<?= e(csrf_token()) ?>">
                     <?php foreach ($scheduleData['managed_seasons'] ?? $scheduleData['seasons'] as $season): ?>
-                        <form method="post" action="<?= e(url('sessions/seasons')) ?>" class="schedule-row season-row" data-preserve-scroll>
+                        <form method="post" action="<?= e(url('sessions/seasons')) ?>" class="schedule-row season-row" data-preserve-scroll data-order-item="<?= e($season['id']) ?>">
+                            <?php $renderOrderHandle('seasons', (string) $season['name']); ?>
                             <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
                             <input type="hidden" name="id" value="<?= e($season['id']) ?>">
                             <input type="hidden" name="updated_at" value="<?= e($season['updated_at']) ?>">
@@ -92,7 +108,8 @@ foreach ($sessionGroups as $sessionId => $groups) {
                             <button class="button button-ghost" name="intent" value="remove">Remove</button>
                         </form>
                     <?php endforeach; ?>
-                    <form method="post" action="<?= e(url('sessions/seasons')) ?>" class="schedule-add season-row" data-preserve-scroll>
+                    </div>
+                    <form method="post" action="<?= e(url('sessions/seasons')) ?>" class="schedule-add season-row<?= $canReorder ? ' has-order-offset' : '' ?>" data-preserve-scroll>
                         <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
                         <input name="name" placeholder="New season name" required aria-label="Season name">
                         <input name="start_date" type="date" required aria-label="Start date">
@@ -110,9 +127,11 @@ foreach ($sessionGroups as $sessionId => $groups) {
                 <summary><span class="audit-toggle" aria-hidden="true"></span><strong id="rinks-heading">Rinks</strong></summary>
                 <div class="schedule-admin-grid">
                     <section class="schedule-admin-card rink-manager-card">
-                        <div class="rink-manager-list">
+                        <?php $renderOrderHelp('rinks'); ?>
+                        <div class="rink-manager-list schedule-order-list<?= $canReorder ? ' has-ordering' : '' ?>" <?= $canReorder ? 'data-order-list="rinks"' : '' ?> data-order-url="<?= e(url('api/schedule/order')) ?>" data-order-token="<?= e(csrf_token()) ?>">
                         <?php foreach ($scheduleData['rinks'] as $rink): ?>
-                            <form method="post" action="<?= e(url('sessions/rinks')) ?>" class="rink-row" data-preserve-scroll>
+                            <form method="post" action="<?= e(url('sessions/rinks')) ?>" class="rink-row" data-preserve-scroll data-order-item="<?= e($rink) ?>">
+                                <?php $renderOrderHandle('rinks', (string) $rink); ?>
                                 <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
                                 <input type="hidden" name="return_season_id" value="<?= e($selectedSeasonId ?? '') ?>">
                                 <input type="hidden" name="original_name" value="<?= e($rink) ?>">
@@ -122,7 +141,7 @@ foreach ($sessionGroups as $sessionId => $groups) {
                             </form>
                         <?php endforeach; ?>
                         </div>
-                        <form method="post" action="<?= e(url('sessions/rinks')) ?>" class="rink-row rink-row-add" data-preserve-scroll>
+                        <form method="post" action="<?= e(url('sessions/rinks')) ?>" class="rink-row rink-row-add<?= $canReorder ? ' has-order-offset' : '' ?>" data-preserve-scroll>
                             <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
                             <input type="hidden" name="return_season_id" value="<?= e($selectedSeasonId ?? '') ?>">
                             <input name="name" placeholder="New rink" required>
@@ -141,7 +160,8 @@ foreach ($sessionGroups as $sessionId => $groups) {
             <?php if ($selectedSeason !== null): ?>
             <div class="schedule-admin-grid">
                 <section class="schedule-admin-card" style="--session-rink-width: <?= e((string) $sessionRinkSelectWidth) ?>px">
-                    <div class="session-column-headings" aria-hidden="true">
+                    <?php $renderOrderHelp('sessions'); ?>
+                    <div class="session-column-headings<?= $canReorder ? ' has-order-offset' : '' ?>" aria-hidden="true">
                         <span>SKU</span>
                         <span>Name</span>
                         <span>Day</span>
@@ -152,8 +172,10 @@ foreach ($sessionGroups as $sessionId => $groups) {
                         <span></span>
                         <span></span>
                     </div>
+                    <div class="schedule-order-list<?= $canReorder ? ' has-ordering' : '' ?>" <?= $canReorder ? 'data-order-list="sessions"' : '' ?> data-season-id="<?= e($selectedSeason['id']) ?>" data-order-url="<?= e(url('api/schedule/order')) ?>" data-order-token="<?= e(csrf_token()) ?>">
                     <?php foreach ($scheduleData['sessions'] as $session): ?>
-                        <form method="post" action="<?= e(url('sessions/sessions')) ?>" class="schedule-row session-row" data-preserve-scroll>
+                        <form method="post" action="<?= e(url('sessions/sessions')) ?>" class="schedule-row session-row" data-preserve-scroll data-order-item="<?= e($session['id']) ?>">
+                            <?php $renderOrderHandle('sessions', (string) $session['name']); ?>
                             <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
                             <input type="hidden" name="id" value="<?= e($session['id']) ?>">
                             <input type="hidden" name="season_id" value="<?= e($selectedSeason['id']) ?>">
@@ -169,7 +191,8 @@ foreach ($sessionGroups as $sessionId => $groups) {
                             <button class="button button-ghost" name="intent" value="remove">Remove</button>
                         </form>
                     <?php endforeach; ?>
-                    <form method="post" action="<?= e(url('sessions/sessions')) ?>" class="schedule-add session-row" data-preserve-scroll>
+                    </div>
+                    <form method="post" action="<?= e(url('sessions/sessions')) ?>" class="schedule-add session-row<?= $canReorder ? ' has-order-offset' : '' ?>" data-preserve-scroll>
                         <input type="hidden" name="_token" value="<?= e(csrf_token()) ?>">
                         <input type="hidden" name="season_id" value="<?= e($selectedSeason['id']) ?>">
                         <input name="sku" placeholder="SKU" required maxlength="64" aria-label="SKU">
